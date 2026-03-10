@@ -8,7 +8,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -122,6 +122,30 @@ def get_comparison():
 
 
 @app.get("/api/liquidity")
-def get_liquidity():
-    """Orderbook liquidity data (spreads + depth)."""
-    return liquidity_collector.get_data()
+def get_liquidity(hours: int | None = Query(default=None, ge=1, le=168)):
+    """
+    Orderbook liquidity stats.
+    - No `hours` param → returns the fast cached 4h window (default).
+    - `hours=N`       → queries DB fresh for the last N hours (1–168).
+    """
+    if hours is None:
+        return liquidity_collector.get_data()
+    return liquidity_collector.get_stats(hours=hours)
+
+
+@app.get("/api/liquidity/timeseries")
+def get_liquidity_timeseries(
+    ticker: str,
+    hours: int = Query(default=4, ge=1, le=168),
+):
+    """
+    Bucketed spread + depth timeseries for a specific ticker, all DEXes.
+    Used to power the 'over time' line charts in the frontend.
+    """
+    return liquidity_collector.get_timeseries(ticker=ticker, hours=hours)
+
+
+@app.get("/api/liquidity/tickers")
+def get_liquidity_tickers():
+    """All discovered tickers, grouped by DEX."""
+    return liquidity_collector.get_available_tickers()
