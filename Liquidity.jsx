@@ -240,8 +240,8 @@ export default function LiquidityDashboard() {
         </p>
       </div>
 
-      {/* Controls: time range + ticker search */}
-      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16, flexWrap:"wrap" }}>
+      {/* Controls row 1: time range + ticker search */}
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10, flexWrap:"wrap" }}>
 
         {/* Time range buttons */}
         <div style={{ display:"flex", gap:4 }}>
@@ -267,23 +267,38 @@ export default function LiquidityDashboard() {
           value={ticker}
           onChange={t => {
             setTicker(t);
-            // Keep deployer only if it has this ticker
             const newDexes = DEX_ORDER.filter(dex => (tkByDex[dex] || []).includes(t));
             if (!newDexes.includes(deployer)) setDeployer(newDexes[0] || "km");
           }}
         />
+      </div>
 
-        {/* DEX coverage pills */}
-        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-          {DEX_ORDER.map(dex => {
-            const has = (tkByDex[dex] || []).includes(ticker);
-            return (
-              <span key={dex} style={{ fontSize:10, color:has?C[dex]:C.muted, fontWeight:has?700:400, opacity:has?1:.35 }}>
-                {dexNames[dex] || dex}
-              </span>
-            );
-          })}
-        </div>
+      {/* Controls row 2: deployer selector */}
+      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+        {DEX_ORDER.map(dx => {
+          const hasPair = (tkByDex[dx] || []).includes(ticker);
+          const isAct   = deployer === dx;
+          const dxRow   = tickerData.find(x => x.dex === dx);
+          return (
+            <button key={dx} onClick={() => hasPair && setDeployer(dx)} style={{
+              background:  isAct ? C[dx]+"22" : "transparent",
+              color:       isAct ? C[dx] : hasPair ? C.muted : C.border,
+              border:     `1px solid ${isAct ? C[dx]+"66" : C.border}`,
+              borderRadius:6, padding:"6px 16px", fontSize:11, fontWeight:600,
+              cursor: hasPair ? "pointer" : "default", fontFamily:"inherit",
+              opacity: hasPair ? 1 : .35,
+              display:"flex", alignItems:"center", gap:7,
+            }}>
+              <span style={{ width:7, height:7, borderRadius:"50%", background:C[dx], flexShrink:0, opacity: hasPair ? 1 : .4 }} />
+              {dexNames[dx] || dx}
+              {dxRow && (
+                <span style={{ fontSize:10, opacity:.65, marginLeft:2 }}>
+                  {dxRow.spread.toFixed(2)} bps
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Two-column layout */}
@@ -377,41 +392,19 @@ export default function LiquidityDashboard() {
                   })}
                 </tbody>
               </table>
-              <div style={{ marginTop:8, fontSize:9, color:C.muted }}>Click a row to inspect in the stats panel →</div>
+              <div style={{ marginTop:8, fontSize:9, color:C.muted }}>Row highlighting follows selected deployer above</div>
             </div>
           )}
         </div>
 
         {/* RIGHT: single pair stats panel */}
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20, position:"sticky", top:64 }}>
-          <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, margin:"0 0 16px", fontWeight:600 }}>Single Pair Stats</h3>
-
-          {/* Deployer selector */}
-          <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:9, color:C.muted, textTransform:"uppercase", letterSpacing:1, marginBottom:7 }}>Deployer</div>
-            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-              {DEX_ORDER.map(dx => {
-                const dxRow   = tickerData.find(x => x.dex === dx);
-                const hasPair = (tkByDex[dx] || []).includes(ticker);
-                const isAct   = deployer === dx;
-                return (
-                  <button key={dx} onClick={() => hasPair && setDeployer(dx)} style={{
-                    background: isAct ? C[dx]+"1a" : "transparent",
-                    color:      isAct ? C[dx] : hasPair ? C.muted : C.border,
-                    border:    `1px solid ${isAct ? C[dx]+"55" : C.border}`,
-                    borderRadius:6, padding:"7px 12px", fontSize:11, fontWeight:600,
-                    cursor: hasPair ? "pointer" : "default", fontFamily:"inherit",
-                    display:"flex", justifyContent:"space-between", alignItems:"center",
-                    opacity: hasPair ? 1 : .35,
-                  }}>
-                    <span>{dexNames[dx] || dx}</span>
-                    <span style={{ fontSize:10, opacity:.75 }}>
-                      {dxRow ? `${dxRow.spread.toFixed(2)} bps` : "—"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
+            <span style={{ width:9, height:9, borderRadius:"50%", background:C[deployer], flexShrink:0 }} />
+            <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, margin:0, fontWeight:600 }}>
+              {dexNames[deployer] || deployer}
+              <span style={{ color:C.muted, fontWeight:400, fontSize:12 }}> · {ticker}</span>
+            </h3>
           </div>
 
           <div style={{ height:1, background:C.border, marginBottom:16 }} />
