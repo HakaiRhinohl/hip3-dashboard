@@ -183,10 +183,7 @@ export default function LiquidityDashboard() {
   const { data: tsData } =
     useApiData(`/api/liquidity/timeseries?ticker=${encodeURIComponent(ticker)}&hours=${hours}`);
 
-  if (loading && !apiData) return <Loading message="Loading liquidity data…" />;
-  if (error   && !apiData) return <ErrorState error={error} onRetry={refetch} />;
-  if (apiData?.status === "loading") return <Loading message={apiData.message} />;
-
+  // ── All derived values + hooks BEFORE any early return (Rules of Hooks) ──────
   const d          = apiData;
   const allTickers = d?.tickers        || [];
   const tkByDex    = d?.tickers_by_dex || {};
@@ -226,6 +223,11 @@ export default function LiquidityDashboard() {
   const badgeColor = isBestSpr ? C.km : isWorstSpr ? "#ff6b6b" : C.muted;
 
   const tsDexes = tsData?.series ? Object.keys(tsData.series) : [];
+
+  // ── Early returns AFTER all hooks ─────────────────────────────────────────────
+  if (loading && !apiData) return <Loading message="Loading liquidity data…" />;
+  if (error   && !apiData) return <ErrorState error={error} onRetry={refetch} />;
+  if (apiData?.status === "loading") return <Loading message={apiData.message} />;
 
   return (
     <div style={{ background:C.bg, color:C.text, minHeight:"100vh", fontFamily:"'IBM Plex Mono', monospace", padding:"20px 24px" }}>
