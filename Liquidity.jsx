@@ -189,8 +189,6 @@ export default function LiquidityDashboard() {
   const tkByDex    = d?.tickers_by_dex || {};
   const dexNames   = d?.dex_names      || {};
 
-  const dexesWithTicker = DEX_ORDER.filter(dex => (tkByDex[dex] || []).includes(ticker));
-
   const tickerData = useMemo(() => {
     if (!d?.summary) return [];
     return DEX_ORDER
@@ -207,6 +205,15 @@ export default function LiquidityDashboard() {
     { dist:"±50 bps",  ...Object.fromEntries(tickerData.map(s => [s.dex, s.d50])) },
     { dist:"±100 bps", ...Object.fromEntries(tickerData.map(s => [s.dex, s.d100])) },
   ], [tickerData]);
+
+  // hasPair: use tickers_by_dex (new backend) or fall back to summary entries (old backend)
+  // Declared AFTER tickerData so the fallback can reference it safely
+  const hasPairFn = (dex) =>
+    (tkByDex[dex]?.length > 0)
+      ? (tkByDex[dex] || []).includes(ticker)
+      : Boolean(tickerData.find(x => x.dex === dex));
+
+  const dexesWithTicker = DEX_ORDER.filter(hasPairFn);
 
   // Right panel
   const selData      = tickerData.find(s => s.dex === deployer) || null;
@@ -276,7 +283,7 @@ export default function LiquidityDashboard() {
       {/* Controls row 2: deployer selector */}
       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:16, flexWrap:"wrap" }}>
         {DEX_ORDER.map(dx => {
-          const hasPair = (tkByDex[dx] || []).includes(ticker);
+          const hasPair = hasPairFn(dx);
           const isAct   = deployer === dx;
           const dxRow   = tickerData.find(x => x.dex === dx);
           return (
@@ -463,7 +470,7 @@ export default function LiquidityDashboard() {
             </div>
           ) : (
             <div style={{ color:C.muted, fontSize:11, textAlign:"center", padding:"24px 0" }}>
-              {(tkByDex[deployer]||[]).includes(ticker)
+              {hasPairFn(deployer)
                 ? "No data yet — snapshots arriving…"
                 : `${dexNames[deployer]||deployer} doesn't list ${ticker}`}
             </div>
