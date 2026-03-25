@@ -25,7 +25,19 @@ KNOWN_ADDRESSES = {
         "deployer": "0x75e05d6bc77ce5e288a9f0e935e5e75fa5c0a700",
         "trading_builder": "0x42f3226007290b02c5a0b15bccbb1ba6df04f992",
         "staking_builder": "0x4ec89c1c70ca1e2f224bb43e28d122f4d2b4e8bb",
-    }
+    },
+    "xyz": {
+        "fee_recipient": "0x9cd0a696c7cbb9d44de99268194cb08e5684e5fe",
+        "deployer": "0x88806a71d74ad0a510b350545c9ae490912f0888",
+    },
+    "flx": {
+        "fee_recipient": "0xe2872b5ae7dcbba40cc4510d08c8bbea95b42d43",
+        "deployer": "0x2fab552502a6d45920d5741a2f3ebf4c35536352",
+    },
+    "cash": {
+        "fee_recipient": "0xaa7f0d3da989dae8fd166345a3ce21509f8c8bb4",
+        "deployer": "0xffa8198c62adb1e811629bd54c9b646d726deef7",
+    },
 }
 
 KM_EFF_BPS_GROWTH = 0.4074

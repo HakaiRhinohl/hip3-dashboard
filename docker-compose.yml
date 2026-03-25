@@ -10,6 +10,9 @@ services:
       - "8000:8000"
     environment:
       - TZ=UTC
+      - LIQUIDITY_DB_PATH=/data/liquidity.db
+    volumes:
+      - liquidity-data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
@@ -57,3 +60,4 @@ services:
 
 volumes:
   umami-db-data:
+  liquidity-data:
