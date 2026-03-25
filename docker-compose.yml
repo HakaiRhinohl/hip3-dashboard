@@ -1,13 +1,12 @@
 version: "3.8"
 
 services:
-  # ── Kinetiq API Backend ──────────────────────────
   backend:
     build: ./backend
-    container_name: kinetiq-backend
+    container_name: hip3-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8002:8000"
     environment:
       - TZ=UTC
       - LIQUIDITY_DB_PATH=/data/liquidity.db
@@ -19,45 +18,5 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── Nginx Reverse Proxy ──────────────────────────
-  nginx:
-    image: nginx:alpine
-    container_name: kinetiq-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    depends_on:
-      - backend
-      - umami
-
-  # ── Umami Analytics ──────────────────────────────
-  umami-db:
-    image: postgres:15-alpine
-    container_name: kinetiq-umami-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: umami
-      POSTGRES_USER: umami
-      POSTGRES_PASSWORD: umami_secret_change_me  # <-- Change this!
-    volumes:
-      - umami-db-data:/var/lib/postgresql/data
-
-  umami:
-    image: ghcr.io/umami-software/umami:postgresql-latest
-    container_name: kinetiq-umami
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://umami:umami_secret_change_me@umami-db:5432/umami
-      APP_SECRET: your_random_secret_here  # <-- Change this!
-    depends_on:
-      - umami-db
-    ports:
-      - "3000:3000"
-
 volumes:
-  umami-db-data:
   liquidity-data:
