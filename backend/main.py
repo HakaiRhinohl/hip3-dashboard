@@ -24,7 +24,8 @@ logging.basicConfig(
 logger = logging.getLogger("kinetiq")
 
 # ── Collectors (hold data in memory) ──────────────────────
-revenue_collector = RevenueCollector()
+REVENUE_DEXES = ["km", "xyz", "flx", "cash"]
+revenue_collectors = {dex: RevenueCollector(dex) for dex in REVENUE_DEXES}
 comparison_collector = ComparisonCollector()
 liquidity_collector = LiquidityCollector()
 
@@ -32,11 +33,12 @@ scheduler = AsyncIOScheduler()
 
 
 async def run_revenue():
-    try:
-        await asyncio.to_thread(revenue_collector.collect)
-        logger.info("Revenue collection complete")
-    except Exception as e:
-        logger.error(f"Revenue collection failed: {e}")
+    for dex, collector in revenue_collectors.items():
+        try:
+            await asyncio.to_thread(collector.collect)
+            logger.info(f"Revenue collection complete ({dex})")
+        except Exception as e:
+            logger.error(f"Revenue collection failed ({dex}): {e}")
 
 
 async def run_comparison():
@@ -102,7 +104,7 @@ def health():
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "collectors": {
-            "revenue": revenue_collector.last_updated,
+            "revenue": {dex: revenue_collectors[dex].last_updated for dex in REVENUE_DEXES},
             "comparison": comparison_collector.last_updated,
             "liquidity": liquidity_collector.last_updated,
         },
@@ -110,9 +112,12 @@ def health():
 
 
 @app.get("/api/revenue")
-def get_revenue():
-    """Markets by Kinetiq revenue data."""
-    return revenue_collector.get_data()
+def get_revenue(dex: str = Query(default="km")):
+    """Revenue data per DEX. ?dex=km|xyz|flx|cash"""
+    collector = revenue_collectors.get(dex)
+    if not collector:
+        return {"error": f"Unknown dex: {dex}. Valid: {REVENUE_DEXES}"}
+    return collector.get_data()
 
 
 @app.get("/api/comparison")

@@ -1,6 +1,6 @@
 """
-Revenue collector — adapted from 09_markets_revenue_report.py
-Fetches km: candles, fees, and computes projections.
+Revenue collector — supports km, xyz, flx, cash.
+Fetches candles, on-chain fees, and computes projections per DEX.
 """
 
 import logging
@@ -11,32 +11,48 @@ from schedulers import hl_post
 
 logger = logging.getLogger("kinetiq.revenue")
 
-DEX = "km"
-MARKETS_LAUNCH = datetime(2026, 1, 12)
-MARKETS_LAUNCH_MS = int(MARKETS_LAUNCH.timestamp() * 1000)
+LAUNCH_MS = int(datetime(2025, 11, 1).timestamp() * 1000)
 
-FEE_RECIPIENT = "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2"
-DEPLOYER = "0x75e05d6bc77ce5e288a9f0e935e5e75fa5c0a700"
-TRADING_BUILDER = "0x42f3226007290b02c5a0b15bccbb1ba6df04f992"
-STAKING_BUILDER = "0x4ec89c1c70ca1e2f224bb43e28d122f4d2b4e8bb"
+# On-chain addresses per DEX
+DEX_CONFIG = {
+    "km": {
+        "fee_recipient": "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2",
+        "builders": [
+            "0x42f3226007290b02c5a0b15bccbb1ba6df04f992",  # trading
+            "0x4ec89c1c70ca1e2f224bb43e28d122f4d2b4e8bb",  # staking
+        ],
+        "growth_discount": 0.10,
+    },
+    "xyz": {
+        "fee_recipient": "0x9cd0a696c7cbb9d44de99268194cb08e5684e5fe",
+        "builders": ["0x88806a71d74ad0a510b350545c9ae490912f0888"],
+        "growth_discount": None,
+    },
+    "flx": {
+        "fee_recipient": "0xe2872b5ae7dcbba40cc4510d08c8bbea95b42d43",
+        "builders": ["0x2fab552502a6d45920d5741a2f3ebf4c35536352"],
+        "growth_discount": None,
+    },
+    "cash": {
+        "fee_recipient": "0xaa7f0d3da989dae8fd166345a3ce21509f8c8bb4",
+        "builders": ["0xffa8198c62adb1e811629bd54c9b646d726deef7"],
+        "growth_discount": None,
+    },
+}
 
-GROWTH_DISCOUNT = 0.10
 
-
-def try_candle_download(coin_name: str, perp_dex: str | None = None) -> list:
-    """Try downloading candles with optional perpDex param."""
+def _try_candle_download(coin_name: str, perp_dex: str | None = None) -> list:
     payload = {
         "type": "candleSnapshot",
         "req": {
             "coin": coin_name,
             "interval": "1d",
-            "startTime": MARKETS_LAUNCH_MS,
+            "startTime": LAUNCH_MS,
             "endTime": int(datetime.now().timestamp() * 1000),
         },
     }
     if perp_dex:
         payload["perpDex"] = perp_dex
-
     result = hl_post(payload, f"candle {coin_name}")
     if isinstance(result, list) and len(result) > 0:
         return result
@@ -44,7 +60,11 @@ def try_candle_download(coin_name: str, perp_dex: str | None = None) -> list:
 
 
 class RevenueCollector:
-    def __init__(self):
+    def __init__(self, dex: str):
+        if dex not in DEX_CONFIG:
+            raise ValueError(f"Unknown DEX: {dex}")
+        self.dex = dex
+        self.cfg = DEX_CONFIG[dex]
         self.data = None
         self.last_updated = None
 
@@ -54,39 +74,29 @@ class RevenueCollector:
         return self.data
 
     def collect(self):
-        """Run full revenue collection."""
-        logger.info("Starting revenue collection...")
+        logger.info(f"Starting revenue collection for {self.dex}...")
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        days_since_launch = (datetime.now() - MARKETS_LAUNCH).days
 
-        # Step 1: Get km tickers
-        dex_limits = hl_post({"type": "perpDexLimits", "dex": DEX}, "limits km")
+        # Step 1: Get tickers
+        dex_limits = hl_post({"type": "perpDexLimits", "dex": self.dex}, f"limits {self.dex}")
         if not dex_limits:
-            logger.error("Failed to get perpDexLimits")
+            logger.error(f"Failed to get perpDexLimits for {self.dex}")
             return
 
-        km_tickers = []
-        oi_caps = {}
+        tickers = []
         for pair in dex_limits.get("coinToOiCap", []):
             if isinstance(pair, list) and len(pair) == 2:
-                km_tickers.append(pair[0])
-                oi_caps[pair[0]] = float(pair[1])
+                tickers.append(pair[0])
 
-        logger.info(f"Found {len(km_tickers)} km tickers")
+        logger.info(f"{self.dex}: found {len(tickers)} tickers")
 
         # Step 2: Download candles
+        prefix = f"{self.dex}:"
         candles_by_ticker = {}
-        for ticker in km_tickers:
-            short = ticker.replace("km:", "")
-            attempts = [
-                (ticker, DEX),
-                (short, DEX),
-                (ticker, None),
-                (short, None),
-            ]
-
-            for coin_name, pdex in attempts:
-                raw = try_candle_download(coin_name, pdex)
+        for ticker in tickers:
+            short = ticker.replace(prefix, "")
+            for coin_name, pdex in [(ticker, self.dex), (short, self.dex), (ticker, None), (short, None)]:
+                raw = _try_candle_download(coin_name, pdex)
                 if raw:
                     rows = []
                     for c in raw:
@@ -101,65 +111,61 @@ class RevenueCollector:
                 time.sleep(0.1)
 
         # Step 3: Aggregate volume
-        daily_vol = {}
-        vol_by_ticker = {}
-
+        daily_vol, vol_by_ticker = {}, {}
         for ticker, rows in candles_by_ticker.items():
             ticker_total = 0
             for row in rows:
-                date = row["date"]
-                vol = row["volume_usd"]
-                daily_vol[date] = daily_vol.get(date, 0) + vol
-                ticker_total += vol
+                daily_vol[row["date"]] = daily_vol.get(row["date"], 0) + row["volume_usd"]
+                ticker_total += row["volume_usd"]
             vol_by_ticker[ticker] = ticker_total
 
         total_cum_vol = sum(daily_vol.values())
         num_days = len(daily_vol)
         avg_daily = total_cum_vol / num_days if num_days > 0 else 0
-
         sorted_dates = sorted(daily_vol.keys())
         last_7 = sorted_dates[-7:] if len(sorted_dates) >= 7 else sorted_dates
         last_30 = sorted_dates[-30:] if len(sorted_dates) >= 30 else sorted_dates
         avg_7d = sum(daily_vol[d] for d in last_7) / len(last_7) if last_7 else 0
         avg_30d = sum(daily_vol[d] for d in last_30) / len(last_30) if last_30 else 0
 
+        # days since first data point
+        if sorted_dates:
+            first_date = datetime.strptime(sorted_dates[0], "%Y-%m-%d")
+            days_since_launch = (datetime.now() - first_date).days or 1
+        else:
+            days_since_launch = 1
+
         # Step 4: On-chain fees
-        ch_km = hl_post(
-            {"type": "clearinghouseState", "user": FEE_RECIPIENT, "dex": "km"},
-            "CH fee_recipient",
+        ch = hl_post(
+            {"type": "clearinghouseState", "user": self.cfg["fee_recipient"], "dex": self.dex},
+            f"CH {self.dex}",
         )
-        deployer_fees = (
-            float(ch_km.get("marginSummary", {}).get("accountValue", "0"))
-            if ch_km
-            else 0
-        )
+        deployer_fees = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
 
-        ref_t = hl_post({"type": "referral", "user": TRADING_BUILDER}, "ref trading")
-        trading_rewards = float(ref_t.get("builderRewards", "0")) if ref_t else 0
+        total_builder = 0.0
+        for addr in self.cfg["builders"]:
+            ref = hl_post({"type": "referral", "user": addr}, f"ref {addr[:8]}")
+            total_builder += float(ref.get("builderRewards", "0")) if ref else 0
 
-        ref_s = hl_post({"type": "referral", "user": STAKING_BUILDER}, "ref staking")
-        staking_rewards = float(ref_s.get("builderRewards", "0")) if ref_s else 0
-
-        total_builder = trading_rewards + staking_rewards
         total_fees = deployer_fees + total_builder
 
         # Fee rates
-        eff_deployer_bps = 0
-        normal_deployer_bps = 0
-        eff_builder_bps = 0
-
-        if total_cum_vol > 0 and deployer_fees > 0:
-            eff_deployer_bps = (deployer_fees / total_cum_vol) * 10000
-            eff_builder_bps = (total_builder / total_cum_vol) * 10000
-            normal_deployer_bps = eff_deployer_bps / GROWTH_DISCOUNT
+        eff_deployer_bps = 0.0
+        normal_deployer_bps = 0.0
+        eff_builder_bps = 0.0
+        if total_cum_vol > 0:
+            if deployer_fees > 0:
+                eff_deployer_bps = (deployer_fees / total_cum_vol) * 10000
+            if total_builder > 0:
+                eff_builder_bps = (total_builder / total_cum_vol) * 10000
+            discount = self.cfg.get("growth_discount")
+            normal_deployer_bps = eff_deployer_bps / discount if discount else eff_deployer_bps
 
         # Step 5: Net deposit
-        dex_status = hl_post({"type": "perpDexStatus", "dex": DEX}, "status km")
-        total_net_deposit = (
-            float(dex_status.get("totalNetDeposit", "0")) if dex_status else 0
-        )
+        dex_status = hl_post({"type": "perpDexStatus", "dex": self.dex}, f"status {self.dex}")
+        total_net_deposit = float(dex_status.get("totalNetDeposit", "0")) if dex_status else 0
 
-        # Build daily chart data
+        # Build daily chart
         cum = 0
         daily_chart = []
         for date in sorted_dates:
@@ -179,10 +185,9 @@ class RevenueCollector:
                 "total_fee_normal": round(fn + bf, 2),
             })
 
-        # Projections (based on 30d average)
-        daily_b = total_builder / days_since_launch if days_since_launch > 0 else 0
+        # Projections
+        daily_b = total_builder / days_since_launch
         ann_b = daily_b * 365
-
         projections = {}
         for label, avg_d in [("last_7d", avg_7d), ("last_30d", avg_30d)]:
             if avg_d > 0 and eff_deployer_bps > 0:
@@ -191,36 +196,27 @@ class RevenueCollector:
                 ann_dn = ann_vol * normal_deployer_bps / 10000
                 projections[label] = {
                     "avg_daily_volume": round(avg_d),
-                    "growth_mode": {
-                        "deployer": round(ann_dg),
-                        "builder": round(ann_b),
-                        "total": round(ann_dg + ann_b),
-                    },
-                    "normal_mode": {
-                        "deployer": round(ann_dn),
-                        "builder": round(ann_b),
-                        "total": round(ann_dn + ann_b),
-                    },
+                    "growth_mode": {"deployer": round(ann_dg), "builder": round(ann_b), "total": round(ann_dg + ann_b)},
+                    "normal_mode": {"deployer": round(ann_dn), "builder": round(ann_b), "total": round(ann_dn + ann_b)},
                 }
 
-        # Volume by ticker (sorted)
+        # Ticker chart
         sorted_tickers = sorted(vol_by_ticker.items(), key=lambda x: -x[1])
         ticker_chart = [
-            {"ticker": t.replace("km:", ""), "volume": round(v), "pct": round(v / total_cum_vol * 100, 1) if total_cum_vol > 0 else 0}
+            {"ticker": t.replace(prefix, ""), "volume": round(v), "pct": round(v / total_cum_vol * 100, 1) if total_cum_vol > 0 else 0}
             for t, v in sorted_tickers
         ]
 
-        # Assemble response
         self.data = {
+            "dex": self.dex,
             "generated_at": now_str,
             "days_since_launch": days_since_launch,
-            "km_tickers": len(km_tickers),
+            "num_tickers": len(tickers),
             "total_volume": round(total_cum_vol),
             "total_net_deposit": round(total_net_deposit, 2),
             "fees": {
                 "deployer": round(deployer_fees, 2),
-                "trading_builder": round(trading_rewards, 2),
-                "staking_builder": round(staking_rewards, 2),
+                "builder": round(total_builder, 2),
                 "total": round(total_fees, 2),
             },
             "rates": {
@@ -228,14 +224,10 @@ class RevenueCollector:
                 "eff_deployer_bps_normal": round(normal_deployer_bps, 4),
                 "eff_builder_bps": round(eff_builder_bps, 4),
             },
-            "averages": {
-                "daily": round(avg_daily),
-                "avg_7d": round(avg_7d),
-                "avg_30d": round(avg_30d),
-            },
+            "averages": {"daily": round(avg_daily), "avg_7d": round(avg_7d), "avg_30d": round(avg_30d)},
             "projections": projections,
             "daily_chart": daily_chart,
             "ticker_chart": ticker_chart,
         }
         self.last_updated = now_str
-        logger.info(f"Revenue data updated: ${total_cum_vol:,.0f} volume, ${total_fees:,.2f} fees")
+        logger.info(f"{self.dex} revenue: ${total_cum_vol:,.0f} vol, ${total_fees:,.2f} fees")
