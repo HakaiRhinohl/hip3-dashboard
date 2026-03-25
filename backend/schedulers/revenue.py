@@ -143,7 +143,12 @@ class RevenueCollector:
         deployer_fees = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
 
         total_builder = 0.0
-        for addr in self.cfg["builders"]:
+        queried = set()
+        addrs_to_check = list(self.cfg["builders"]) + [self.cfg["fee_recipient"]]
+        for addr in addrs_to_check:
+            if not addr or addr in queried:
+                continue
+            queried.add(addr)
             ref = hl_post({"type": "referral", "user": addr}, f"ref {addr[:8]}")
             total_builder += float(ref.get("builderRewards", "0")) if ref else 0
 

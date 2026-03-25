@@ -137,22 +137,26 @@ class ComparisonCollector:
             else:
                 r["deployer_fees"] = 0
 
-            # Builder fees
+            # Builder fees — query all known builder addresses + fee_recipient + deployer (deduped)
             builder_total = 0
+            queried_addrs = set()
+
+            def _add_builder_rewards(addr, label):
+                nonlocal builder_total
+                if not addr or addr in queried_addrs:
+                    return
+                queried_addrs.add(addr)
+                ref = hl_post({"type": "referral", "user": addr}, f"ref {dex} {label}")
+                br = float(ref.get("builderRewards", "0")) if ref else 0
+                if br > 0:
+                    builder_total += br
+
             if dex in KNOWN_ADDRESSES:
                 for bkey in ["trading_builder", "staking_builder"]:
-                    addr = KNOWN_ADDRESSES[dex].get(bkey)
-                    if addr:
-                        ref = hl_post({"type": "referral", "user": addr}, f"ref {dex} {bkey}")
-                        br = float(ref.get("builderRewards", "0")) if ref else 0
-                        builder_total += br
+                    _add_builder_rewards(KNOWN_ADDRESSES[dex].get(bkey), bkey)
 
-            if r.get("deployer_addr"):
-                ref = hl_post({"type": "referral", "user": r["deployer_addr"]}, f"ref {dex} deployer")
-                if ref:
-                    br = float(ref.get("builderRewards", "0"))
-                    if br > 0:
-                        builder_total += br
+            _add_builder_rewards(r.get("fee_recipient"), "fee_recipient")
+            _add_builder_rewards(r.get("deployer_addr"), "deployer")
 
             r["builder_fees"] = builder_total
             r["total_fees"] = r["deployer_fees"] + builder_total
