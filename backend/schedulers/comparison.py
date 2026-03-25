@@ -33,10 +33,12 @@ KNOWN_ADDRESSES = {
     "flx": {
         "fee_recipient": "0xe2872b5ae7dcbba40cc4510d08c8bbea95b42d43",
         "deployer": "0x2fab552502a6d45920d5741a2f3ebf4c35536352",
+        "builder": "0x2157f54f7a745c772e686aa691fa590b49171ec9",
     },
     "cash": {
         "fee_recipient": "0xaa7f0d3da989dae8fd166345a3ce21509f8c8bb4",
         "deployer": "0xffa8198c62adb1e811629bd54c9b646d726deef7",
+        "builder": "0x4950994884602d1b6c6d96e4fe30f58205c39395",
     },
 }
 
@@ -152,7 +154,7 @@ class ComparisonCollector:
                     builder_total += br
 
             if dex in KNOWN_ADDRESSES:
-                for bkey in ["trading_builder", "staking_builder"]:
+                for bkey in ["trading_builder", "staking_builder", "builder"]:
                     _add_builder_rewards(KNOWN_ADDRESSES[dex].get(bkey), bkey)
 
             _add_builder_rewards(r.get("fee_recipient"), "fee_recipient")

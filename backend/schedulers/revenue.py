@@ -30,12 +30,12 @@ DEX_CONFIG = {
     },
     "flx": {
         "fee_recipient": "0xe2872b5ae7dcbba40cc4510d08c8bbea95b42d43",
-        "builders": ["0x2fab552502a6d45920d5741a2f3ebf4c35536352"],
+        "builders": ["0x2fab552502a6d45920d5741a2f3ebf4c35536352", "0x2157f54f7a745c772e686aa691fa590b49171ec9"],
         "growth_discount": None,
     },
     "cash": {
         "fee_recipient": "0xaa7f0d3da989dae8fd166345a3ce21509f8c8bb4",
-        "builders": ["0xffa8198c62adb1e811629bd54c9b646d726deef7"],
+        "builders": ["0xffa8198c62adb1e811629bd54c9b646d726deef7", "0x4950994884602d1b6c6d96e4fe30f58205c39395"],
         "growth_discount": None,
     },
 }
