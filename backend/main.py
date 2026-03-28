@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from schedulers.revenue import RevenueCollector
 from schedulers.comparison import ComparisonCollector
 from schedulers.liquidity import LiquidityCollector
+from schedulers.users import UsersCollector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +29,7 @@ REVENUE_DEXES = ["km", "xyz", "flx", "cash"]
 revenue_collectors = {dex: RevenueCollector(dex) for dex in REVENUE_DEXES}
 comparison_collector = ComparisonCollector()
 liquidity_collector = LiquidityCollector()
+users_collector = UsersCollector()
 
 scheduler = AsyncIOScheduler()
 
@@ -57,6 +59,14 @@ async def run_liquidity_snapshot():
         logger.error(f"Liquidity snapshot failed: {e}")
 
 
+async def run_users():
+    try:
+        await asyncio.to_thread(users_collector.collect)
+        logger.info("Users collection complete")
+    except Exception as e:
+        logger.error(f"Users collection failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run initial data collection, then start scheduler."""
@@ -66,12 +76,15 @@ async def lifespan(app: FastAPI):
     await run_revenue()
     await run_comparison()
     await run_liquidity_snapshot()
+    await run_users()
 
     # Schedule periodic collection
     scheduler.add_job(run_revenue, "interval", minutes=5, id="revenue")
     scheduler.add_job(run_comparison, "interval", minutes=5, id="comparison")
     # Liquidity snapshots every 30 seconds
     scheduler.add_job(run_liquidity_snapshot, "interval", seconds=30, id="liquidity")
+    # Users collection every 1 hour
+    scheduler.add_job(run_users, "interval", hours=1, id="users")
 
     scheduler.start()
     logger.info("Scheduler started")
@@ -107,6 +120,7 @@ def health():
             "revenue": {dex: revenue_collectors[dex].last_updated for dex in REVENUE_DEXES},
             "comparison": comparison_collector.last_updated,
             "liquidity": liquidity_collector.last_updated,
+            "users": users_collector.last_updated,
         },
     }
 
@@ -154,3 +168,22 @@ def get_liquidity_timeseries(
 def get_liquidity_tickers():
     """All discovered tickers, grouped by DEX."""
     return liquidity_collector.get_available_tickers()
+
+
+@app.get("/api/users")
+def get_users():
+    """
+    HIP-3 user tracking summary.
+    Returns: total_hip3_users, type_a, type_b, tradfi_pct,
+             by_period (1d/7d/30d/90d), by_venue (km/xyz/flx/cash).
+    """
+    return users_collector.get_data()
+
+
+@app.get("/api/users/timeline")
+def get_users_timeline(days: int = Query(default=90, ge=1, le=90)):
+    """
+    Daily new HIP-3 user counts for the last N days (max 90).
+    Each entry: {date, total, type_a, type_b}
+    """
+    return users_collector.get_timeline(days=days)
