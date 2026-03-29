@@ -9,9 +9,11 @@ services:
       - TZ=UTC
       - LIQUIDITY_DB_PATH=/data/liquidity.db
       - USERS_DB_PATH=/data/users.db
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=ap-northeast-1
     volumes:
       - app-data:/data
-      - ~/.aws:/root/.aws:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
