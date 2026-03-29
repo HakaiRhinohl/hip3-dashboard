@@ -1,32 +1,53 @@
 import { useState, useMemo } from "react";
 import {
-  BarChart, Bar, ComposedChart,
+  BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid,
-  Cell,
 } from "recharts";
 import { useApiData } from "../hooks/useApiData";
 import { Loading, ErrorState } from "../components/States";
 
-const DEX_COLORS = { km: "#00e5a0", xyz: "#7c5cfc", flx: "#ff4d6a", cash: "#ffb020" };
-const DEX_NAMES  = { km: "Markets", xyz: "Trade.xyz", flx: "Felix", cash: "Dreamcash" };
-const TYPE_COLORS = { A: "#a78bfa", B: "#38bdf8" };
-const DEXES = ["km", "xyz", "flx", "cash"];
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const DEX_COLORS = {
+  km:   "#00e5a0",
+  xyz:  "#7c5cfc",
+  flx:  "#ff4d6a",
+  cash: "#ffb020",
+  hyna: "#38bdf8",
+  vntl: "#f472b6",
+};
+
+const DEX_NAMES = {
+  km:   "Markets",
+  xyz:  "Trade.xyz",
+  flx:  "Felix",
+  cash: "Dreamcash",
+  hyna: "Hyna",
+  vntl: "Vantil",
+};
+
+const DEXES = ["km", "xyz", "flx", "cash", "hyna", "vntl"];
+
+const PERIODS = ["7d", "30d", "90d"];
 
 const P = {
   bg:     "#060911",
-  card:   "#0c1020",
-  border: "#151d38",
+  card:   "#0a0e1a",
+  border: "#141c34",
   subtle: "#1a2545",
   text:   "#e4eaf3",
-  muted:  "#4f5e82",
+  muted:  "#4a5578",
 };
 
-const PERIODS = ["1d", "7d", "30d", "90d"];
+// ── Formatters ─────────────────────────────────────────────────────────────────
 
-// ── Tooltip components ─────────────────────────────────────────────────────────
+const fmtN = (n) => (n == null ? "—" : Number(n).toLocaleString());
 
-const UsersTip = ({ active, payload, label }) => {
+// ── Tooltip ────────────────────────────────────────────────────────────────────
+
+const BarTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
+  const total = payload.reduce((s, p) => s + (p.value || 0), 0);
   return (
     <div style={{
       background: "#0f1530", border: `1px solid ${P.border}`,
@@ -35,35 +56,40 @@ const UsersTip = ({ active, payload, label }) => {
     }}>
       <p style={{ color: P.muted, marginBottom: 4, fontWeight: 600, fontSize: 10 }}>{label}</p>
       {payload.filter((p) => p.value > 0).map((p, i) => (
-        <p key={i} style={{ color: p.color, margin: "2px 0" }}>
-          {p.name}: {p.value.toLocaleString()}
+        <p key={i} style={{ color: p.fill, margin: "2px 0" }}>
+          {DEX_NAMES[p.dataKey] || p.dataKey}: {p.value.toLocaleString()}
         </p>
       ))}
+      {total > 0 && (
+        <p style={{ color: P.text, marginTop: 4, borderTop: `1px solid ${P.border}`, paddingTop: 4, fontWeight: 700 }}>
+          Total: {total.toLocaleString()}
+        </p>
+      )}
     </div>
   );
 };
 
-const VenueTip = ({ active, payload, label }) => {
+const DonutTip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
+  const p = payload[0];
   return (
     <div style={{
       background: "#0f1530", border: `1px solid ${P.border}`,
       borderRadius: 6, padding: "8px 12px", fontSize: 11,
       boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
     }}>
-      <p style={{ color: P.muted, marginBottom: 4, fontWeight: 600, fontSize: 10 }}>{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} style={{ color: p.fill, margin: "2px 0" }}>
-          {p.name}: {p.value.toLocaleString()} users
-        </p>
-      ))}
+      <p style={{ color: p.payload.fill, fontWeight: 700, margin: 0 }}>
+        {DEX_NAMES[p.name] || p.name}
+      </p>
+      <p style={{ color: P.text, margin: "2px 0" }}>{p.value.toLocaleString()} users</p>
+      <p style={{ color: P.muted, margin: 0 }}>{p.payload.pct}%</p>
     </div>
   );
 };
 
-// ── Summary card ──────────────────────────────────────────────────────────────
+// ── Sub-components ─────────────────────────────────────────────────────────────
 
-function SummaryCard({ title, value, subtitle, accentColor, large }) {
+function StatCard({ title, value, subtitle, accentColor, large }) {
   return (
     <div style={{
       background: P.card, border: `1px solid ${P.border}`,
@@ -74,10 +100,10 @@ function SummaryCard({ title, value, subtitle, accentColor, large }) {
         position: "absolute", top: 0, left: 0, right: 0, height: 2,
         background: `linear-gradient(90deg, ${accentColor}, transparent)`,
       }} />
-      <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 6 }}>
+      <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 6, letterSpacing: "0.06em" }}>
         {title}
       </div>
-      <div style={{ fontSize: large ? 28 : 22, fontWeight: 700, color: accentColor, lineHeight: 1.1 }}>
+      <div style={{ fontSize: large ? 28 : 22, fontWeight: 700, color: accentColor, lineHeight: 1.1, fontFamily: "'IBM Plex Mono', monospace" }}>
         {value}
       </div>
       {subtitle && (
@@ -87,60 +113,94 @@ function SummaryCard({ title, value, subtitle, accentColor, large }) {
   );
 }
 
+function BootstrapBanner({ status }) {
+  if (!status || status.complete) return null;
+  const pct = status.total_dates > 0
+    ? Math.round((status.processed_dates / status.total_dates) * 100)
+    : 0;
+  return (
+    <div style={{
+      background: "#0d1a2e", border: `1px solid #1e3a5f`,
+      borderRadius: 8, padding: "12px 16px", marginBottom: 16,
+      display: "flex", alignItems: "center", gap: 16,
+    }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 600, marginBottom: 6 }}>
+          Bootstrap in progress — loading historical data
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, height: 4, background: P.subtle, borderRadius: 2, overflow: "hidden" }}>
+            <div style={{
+              height: 4, borderRadius: 2,
+              background: "linear-gradient(90deg, #38bdf8, #7c5cfc)",
+              width: `${pct}%`,
+              transition: "width 0.5s ease",
+            }} />
+          </div>
+          <span style={{ color: "#38bdf8", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap" }}>
+            {pct}% ({status.processed_dates.toLocaleString()} / {status.total_dates.toLocaleString()} dates)
+          </span>
+        </div>
+      </div>
+      <div style={{ color: P.muted, fontSize: 10, textAlign: "right" }}>
+        Data is<br />partial
+      </div>
+    </div>
+  );
+}
+
 // ── Main dashboard ─────────────────────────────────────────────────────────────
 
 export default function UsersDashboard() {
-  const { data: summary, loading: summaryLoading, error: summaryError, refetch: refetchSummary } =
-    useApiData("/api/users");
-  const { data: timelineRaw, loading: timelineLoading, error: timelineError } =
-    useApiData("/api/users/timeline?days=90");
+  const {
+    data: summary, loading: summaryLoading, error: summaryError, refetch,
+  } = useApiData("/api/users/summary");
 
   const [period, setPeriod] = useState("30d");
+  const periodDays = parseInt(period, 10);
 
-  // Period-filtered summary stats
-  const periodStats = useMemo(() => {
-    if (!summary?.by_period) return null;
-    return summary.by_period[period] || null;
-  }, [summary, period]);
+  const { data: timelineRaw, loading: timelineLoading } =
+    useApiData(`/api/users/timeline?period=${periodDays}`);
 
-  // Venue breakdown for horizontal bar chart
-  const venueData = useMemo(() => {
-    if (!summary?.by_venue) return [];
-    return DEXES
-      .map((dex) => ({ name: DEX_NAMES[dex], dex, users: summary.by_venue[dex] || 0 }))
-      .sort((a, b) => b.users - a.users);
-  }, [summary]);
+  const { data: topVenuesRaw } = useApiData("/api/users/top_venues");
 
-  // Timeline chart data (last 90 days)
+  // Stacked bar chart data
   const timelineData = useMemo(() => {
     if (!timelineRaw || !Array.isArray(timelineRaw)) return [];
     return timelineRaw.map((d) => ({
-      date: d.date.slice(5),   // MM-DD for display
-      "Type A": d.type_a,
-      "Type B": d.type_b,
+      date: d.date.slice(5), // MM-DD
+      ...Object.fromEntries(DEXES.map((dex) => [dex, d[dex] || 0])),
     }));
   }, [timelineRaw]);
 
-  // Loading / error states
+  // Donut chart data
+  const donutData = useMemo(() => {
+    if (!topVenuesRaw || !Array.isArray(topVenuesRaw)) return [];
+    return topVenuesRaw
+      .filter((v) => v.unique_users > 0)
+      .map((v) => ({
+        name:         v.dex,
+        value:        v.unique_users,
+        pct:          v.pct,
+        fill:         DEX_COLORS[v.dex] || "#888",
+      }));
+  }, [topVenuesRaw]);
+
+  // Tick interval for x-axis
+  const xInterval = useMemo(() => {
+    if (periodDays <= 7)  return 0;
+    if (periodDays <= 30) return 4;
+    return 9;
+  }, [periodDays]);
+
   if (summaryLoading && !summary) return <Loading message="Loading users data..." />;
-  if (summaryError && !summary)   return <ErrorState error={summaryError} onRetry={refetchSummary} />;
-  if (summary?.status === "loading") return <Loading message={summary.message || "Users data not yet available"} />;
+  if (summaryError && !summary)   return <ErrorState error={summaryError} onRetry={refetch} />;
 
-  const d = summary || {};
-
-  // Formatted numbers
-  const fmtN = (n) => (n == null ? "—" : n.toLocaleString());
-  const fmtPct = (n) => (n == null ? "—" : `${n.toFixed(1)}%`);
-
-  // All-time type_a / type_b
-  const totalHip3  = d.total_hip3_users || 0;
-  const totalTypeA = d.type_a || 0;
-  const totalTypeB = d.type_b || 0;
-  const tradfiPct  = d.tradfi_pct != null ? d.tradfi_pct : null;
-
-  // Pct breakdowns
-  const pctA = totalHip3 > 0 ? (totalTypeA / totalHip3 * 100).toFixed(1) : "0.0";
-  const pctB = totalHip3 > 0 ? (totalTypeB / totalHip3 * 100).toFixed(1) : "0.0";
+  const s = summary || {};
+  const bootstrapStatus   = s.bootstrap_status || {};
+  const totalUsers        = s.total_unique_users || 0;
+  const newUsers          = s.new_users || {};
+  const byDex             = s.by_dex || {};
 
   return (
     <div style={{
@@ -148,46 +208,49 @@ export default function UsersDashboard() {
       fontFamily: "'IBM Plex Mono', monospace", padding: "20px 24px",
     }}>
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>
-          HIP-3 User Tracking
+          HIP-3 User Onboarding
         </h1>
         <p style={{ color: P.muted, fontSize: 11, margin: "4px 0 0" }}>
-          New user adoption, TradFi migration analysis — all-time · updated {d.generated_at || "—"}
+          New users trading HIP-3 assets — tracking migration from TradFi
         </p>
       </div>
 
-      {/* All-time summary cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
-        <SummaryCard
-          title="Total HIP-3 Users"
-          value={fmtN(totalHip3)}
-          subtitle="All-time unique traders"
+      {/* Bootstrap banner */}
+      <BootstrapBanner status={bootstrapStatus} />
+
+      {/* Top row: 4 stat cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        <StatCard
+          title="Total Users"
+          value={fmtN(totalUsers)}
+          subtitle="All-time unique HIP-3 traders"
           accentColor="#a78bfa"
           large
         />
-        <SummaryCard
-          title="Type A — TradFi Pure"
-          value={fmtN(totalTypeA)}
-          subtitle={`${pctA}% of HIP-3 users · first HL fill was HIP-3`}
-          accentColor={TYPE_COLORS.A}
+        <StatCard
+          title="New (7d)"
+          value={fmtN(newUsers["7d"])}
+          subtitle="First-time traders in 7 days"
+          accentColor={DEX_COLORS.km}
         />
-        <SummaryCard
-          title="Type B — HL Adopters"
-          value={fmtN(totalTypeB)}
-          subtitle={`${pctB}% of HIP-3 users · existing HL user`}
-          accentColor={TYPE_COLORS.B}
+        <StatCard
+          title="New (30d)"
+          value={fmtN(newUsers["30d"])}
+          subtitle="First-time traders in 30 days"
+          accentColor={DEX_COLORS.xyz}
         />
-        <SummaryCard
-          title="TradFi Purity %"
-          value={fmtPct(tradfiPct)}
-          subtitle="Users with >80% volume in HIP-3"
-          accentColor="#f472b6"
+        <StatCard
+          title="New (90d)"
+          value={fmtN(newUsers["90d"])}
+          subtitle="First-time traders in 90 days"
+          accentColor={DEX_COLORS.hyna}
         />
       </div>
 
-      {/* Period selector + period stats */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+      {/* Period selector for bar chart */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <span style={{ color: P.muted, fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>Period</span>
         <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${P.border}` }}>
           {PERIODS.map((p) => (
@@ -196,9 +259,9 @@ export default function UsersDashboard() {
               onClick={() => setPeriod(p)}
               style={{
                 background: "transparent",
-                color: period === p ? TYPE_COLORS.A : P.muted,
+                color: period === p ? "#a78bfa" : P.muted,
                 border: "none",
-                borderBottom: period === p ? `2px solid ${TYPE_COLORS.A}` : "2px solid transparent",
+                borderBottom: period === p ? "2px solid #a78bfa" : "2px solid transparent",
                 padding: "6px 14px", fontSize: 11, fontWeight: 600,
                 cursor: "pointer", fontFamily: "inherit",
               }}
@@ -207,142 +270,190 @@ export default function UsersDashboard() {
             </button>
           ))}
         </div>
-        {periodStats && (
-          <div style={{ display: "flex", gap: 20, marginLeft: 8, fontSize: 11 }}>
-            <span style={{ color: P.muted }}>New users: <span style={{ color: P.text, fontWeight: 600 }}>{fmtN(periodStats.total)}</span></span>
-            <span style={{ color: TYPE_COLORS.A }}>Type A: <span style={{ fontWeight: 600 }}>{fmtN(periodStats.type_a)}</span></span>
-            <span style={{ color: TYPE_COLORS.B }}>Type B: <span style={{ fontWeight: 600 }}>{fmtN(periodStats.type_b)}</span></span>
+      </div>
+
+      {/* Second row: stacked bar chart */}
+      <div style={{
+        background: P.card, border: `1px solid ${P.border}`,
+        borderRadius: 10, padding: 20, marginBottom: 12,
+      }}>
+        <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+          New Users per Day
+        </h3>
+        <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
+          First-time HIP-3 traders · stacked by venue · last {period}
+        </p>
+        {timelineLoading && !timelineRaw ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 260, color: P.muted, fontSize: 11 }}>
+            Loading chart data...
           </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={timelineData} barCategoryGap="20%">
+              <CartesianGrid strokeDasharray="3 3" stroke={P.subtle} opacity={0.3} vertical={false} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: P.muted, fontSize: 9 }}
+                tickLine={false}
+                interval={xInterval}
+              />
+              <YAxis
+                tick={{ fill: P.muted, fontSize: 9 }}
+                tickLine={false}
+                axisLine={false}
+                allowDecimals={false}
+              />
+              <Tooltip content={<BarTip />} />
+              <Legend
+                wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
+                formatter={(value) => DEX_NAMES[value] || value}
+              />
+              {DEXES.map((dex, i) => (
+                <Bar
+                  key={dex}
+                  dataKey={dex}
+                  name={dex}
+                  fill={DEX_COLORS[dex]}
+                  stackId="s"
+                  opacity={0.85}
+                  barSize={8}
+                  radius={i === DEXES.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
         )}
       </div>
 
-      {/* Charts row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 12, marginBottom: 12 }}>
+      {/* Third row: Donut + venue table */}
+      <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 12 }}>
 
-        {/* Daily new users — stacked bar */}
-        <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20 }}>
-          <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
-            New HIP-3 Users per Day
-          </h3>
-          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
-            Last 90 days · stacked by Type A (TradFi) vs Type B (HL adopter)
-          </p>
-          {timelineLoading && !timelineRaw ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 280, color: P.muted, fontSize: 11 }}>
-              Loading timeline...
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <ComposedChart data={timelineData} barCategoryGap="15%">
-                <CartesianGrid strokeDasharray="3 3" stroke={P.subtle} opacity={0.3} vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: P.muted, fontSize: 8 }}
-                  tickLine={false}
-                  interval={13}
-                />
-                <YAxis
-                  tick={{ fill: P.muted, fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  allowDecimals={false}
-                />
-                <Tooltip content={<UsersTip />} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
-                <Bar dataKey="Type A" name="Type A — TradFi" fill={TYPE_COLORS.A} stackId="s" opacity={0.85} barSize={6} />
-                <Bar dataKey="Type B" name="Type B — HL Adopter" fill={TYPE_COLORS.B} stackId="s" opacity={0.85} barSize={6} radius={[2, 2, 0, 0]} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* Venue breakdown — horizontal bars */}
-        <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20 }}>
+        {/* Donut chart */}
+        <div style={{
+          background: P.card, border: `1px solid ${P.border}`,
+          borderRadius: 10, padding: 20,
+        }}>
           <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
             Users by Venue
           </h3>
-          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 20px" }}>
-            All-time unique traders per DEX
+          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 8px" }}>
+            All-time first venue for each user
           </p>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart
-              data={venueData}
-              layout="vertical"
-              margin={{ left: 8, right: 24, top: 0, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={P.subtle} opacity={0.3} horizontal={false} />
-              <XAxis type="number" tick={{ fill: P.muted, fontSize: 9 }} tickLine={false} axisLine={false} allowDecimals={false} />
-              <YAxis type="category" dataKey="name" tick={{ fill: P.text, fontSize: 10 }} tickLine={false} axisLine={false} width={68} />
-              <Tooltip content={<VenueTip />} />
-              <Bar dataKey="users" name="Users" radius={[0, 3, 3, 0]} barSize={18}>
-                {venueData.map((entry) => (
-                  <Cell key={entry.dex} fill={DEX_COLORS[entry.dex]} opacity={0.85} />
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie
+                data={donutData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={90}
+                paddingAngle={2}
+                dataKey="value"
+                nameKey="name"
+              >
+                {donutData.map((entry, i) => (
+                  <Cell key={i} fill={entry.fill} opacity={0.9} />
                 ))}
-              </Bar>
-            </BarChart>
+              </Pie>
+              <Tooltip content={<DonutTip />} />
+              <Legend
+                wrapperStyle={{ fontSize: 10 }}
+                formatter={(value) => DEX_NAMES[value] || value}
+              />
+            </PieChart>
           </ResponsiveContainer>
+        </div>
 
-          {/* Venue numbers table */}
-          <div style={{ marginTop: 16, borderTop: `1px solid ${P.border}`, paddingTop: 12 }}>
-            {venueData.map((entry) => {
-              const maxUsers = venueData[0]?.users || 1;
-              const pct = (entry.users / maxUsers * 100).toFixed(0);
-              return (
-                <div key={entry.dex} style={{ marginBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3, fontSize: 10 }}>
-                    <span style={{ color: DEX_COLORS[entry.dex], fontWeight: 600 }}>{entry.name}</span>
-                    <span style={{ color: P.text, fontWeight: 600 }}>{entry.users.toLocaleString()}</span>
+        {/* Venue breakdown table */}
+        <div style={{
+          background: P.card, border: `1px solid ${P.border}`,
+          borderRadius: 10, padding: 20,
+        }}>
+          <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+            Venue Breakdown
+          </h3>
+          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
+            Unique users onboarded per DEX (all-time)
+          </p>
+
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${P.border}` }}>
+                {["Venue", "Unique Users", "Share", "Bar"].map((h, i) => (
+                  <th key={i} style={{
+                    padding: "6px 8px",
+                    textAlign: i === 0 ? "left" : i === 3 ? "left" : "right",
+                    color: P.muted, fontWeight: 600, fontSize: 9,
+                    textTransform: "uppercase",
+                  }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(topVenuesRaw || []).map((v) => {
+                const color = DEX_COLORS[v.dex] || "#888";
+                return (
+                  <tr key={v.dex} style={{ borderBottom: `1px solid ${P.subtle}` }}>
+                    <td style={{ padding: "8px 8px", fontWeight: 600 }}>
+                      <span style={{ color }}>●</span>{" "}
+                      <span style={{ color }}>{DEX_NAMES[v.dex] || v.dex}</span>
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 700 }}>
+                      {v.unique_users.toLocaleString()}
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: P.muted }}>
+                      {v.pct}%
+                    </td>
+                    <td style={{ padding: "8px 8px", minWidth: 100 }}>
+                      <div style={{ height: 4, background: P.subtle, borderRadius: 2 }}>
+                        <div style={{
+                          height: 4, borderRadius: 2,
+                          background: color,
+                          opacity: 0.75,
+                          width: `${v.pct}%`,
+                          transition: "width 0.3s ease",
+                        }} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* By-dex breakdown from summary */}
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
+            <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 10 }}>
+              Users per DEX (from user_stats)
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {DEXES.map((dex) => (
+                <div key={dex} style={{
+                  background: P.subtle, borderRadius: 6,
+                  padding: "8px 10px", borderLeft: `2px solid ${DEX_COLORS[dex]}`,
+                }}>
+                  <div style={{ color: DEX_COLORS[dex], fontSize: 9, fontWeight: 700, marginBottom: 4 }}>
+                    {DEX_NAMES[dex]}
                   </div>
-                  <div style={{ height: 3, background: P.subtle, borderRadius: 2 }}>
-                    <div style={{
-                      height: 3, borderRadius: 2,
-                      background: DEX_COLORS[entry.dex],
-                      opacity: 0.7,
-                      width: `${pct}%`,
-                      transition: "width 0.3s ease",
-                    }} />
+                  <div style={{ fontSize: 15, fontWeight: 700, color: P.text }}>
+                    {fmtN(byDex[dex])}
                   </div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
+
       </div>
 
-      {/* Type classification explainer */}
-      <div style={{
-        background: P.card, border: `1px solid ${P.border}`,
-        borderRadius: 10, padding: "14px 20px",
-        display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16,
-        marginBottom: 12,
-      }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_COLORS.A }} />
-            <span style={{ fontWeight: 600, fontSize: 12, color: TYPE_COLORS.A }}>Type A — TradFi Pure</span>
-          </div>
-          <p style={{ color: P.muted, fontSize: 10, margin: 0, lineHeight: 1.6 }}>
-            Their very first Hyperliquid fill EVER was a HIP-3 asset (within 24 hours of account creation).
-            These are TradFi migrants who came directly to HIP-3 without prior crypto trading on HL.
-          </p>
-        </div>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_COLORS.B }} />
-            <span style={{ fontWeight: 600, fontSize: 12, color: TYPE_COLORS.B }}>Type B — HL Adopters</span>
-          </div>
-          <p style={{ color: P.muted, fontSize: 10, margin: 0, lineHeight: 1.6 }}>
-            Existing Hyperliquid users (traded crypto perps for more than 1 day) who subsequently tried
-            a HIP-3 asset. These are crypto-native traders adopting tokenised real-world assets.
-          </p>
-        </div>
-      </div>
-
-      {/* Footer note */}
-      <div style={{ fontSize: 9, color: P.muted, textAlign: "center", marginTop: 4 }}>
-        Based on historical S3 fills data from Hyperliquid — bootstrap updated{" "}
-        <span style={{ color: P.text }}>{d.bootstrap_date || "unknown"}</span>
-        {" "}· Incremental updates every 1 hour
+      {/* Footer */}
+      <div style={{ marginTop: 16, fontSize: 9, color: P.muted, textAlign: "center" }}>
+        Data source: Hydromancer S3 · s3://hydromancer-reservoir/by_dex/{"{dex}"}/fills/perp/all/
+        {bootstrapStatus.complete
+          ? " · Bootstrap complete"
+          : ` · Bootstrap ${bootstrapStatus.processed_dates || 0}/${bootstrapStatus.total_dates || 0} dates`}
       </div>
     </div>
   );

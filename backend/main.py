@@ -76,15 +76,17 @@ async def lifespan(app: FastAPI):
     await run_revenue()
     await run_comparison()
     await run_liquidity_snapshot()
-    await run_users()
+
+    # Users: start bootstrap in background thread if not complete; otherwise run incremental
+    await asyncio.to_thread(users_collector.maybe_start_bootstrap)
 
     # Schedule periodic collection
     scheduler.add_job(run_revenue, "interval", minutes=5, id="revenue")
     scheduler.add_job(run_comparison, "interval", minutes=5, id="comparison")
     # Liquidity snapshots every 30 seconds
     scheduler.add_job(run_liquidity_snapshot, "interval", seconds=30, id="liquidity")
-    # Users collection every 1 hour
-    scheduler.add_job(run_users, "interval", hours=1, id="users")
+    # Users incremental update every 24 hours
+    scheduler.add_job(run_users, "interval", hours=24, id="users")
 
     scheduler.start()
     logger.info("Scheduler started")
@@ -173,17 +175,34 @@ def get_liquidity_tickers():
 @app.get("/api/users")
 def get_users():
     """
-    HIP-3 user tracking summary.
-    Returns: total_hip3_users, type_a, type_b, tradfi_pct,
-             by_period (1d/7d/30d/90d), by_venue (km/xyz/flx/cash).
+    HIP-3 user tracking summary (legacy endpoint, kept for backward compat).
+    Returns: total_hip3_users, by_dex, new_users, bootstrap_status.
     """
     return users_collector.get_data()
 
 
+@app.get("/api/users/summary")
+def get_users_summary():
+    """
+    HIP-3 user onboarding summary.
+    Returns: total_unique_users, by_dex, new_users (1d/7d/30d/90d), bootstrap_status.
+    """
+    return users_collector.get_summary()
+
+
 @app.get("/api/users/timeline")
-def get_users_timeline(days: int = Query(default=90, ge=1, le=90)):
+def get_users_timeline(period: int = Query(default=90, ge=1, le=365)):
     """
-    Daily new HIP-3 user counts for the last N days (max 90).
-    Each entry: {date, total, type_a, type_b}
+    Daily new HIP-3 user counts per DEX for the last N days.
+    Each entry: {date, km, xyz, flx, cash, hyna, vntl}
     """
-    return users_collector.get_timeline(days=days)
+    return users_collector.get_timeline(period=period)
+
+
+@app.get("/api/users/top_venues")
+def get_users_top_venues():
+    """
+    Unique users per venue, sorted descending.
+    Returns: [{dex, unique_users, pct}, ...]
+    """
+    return users_collector.get_top_venues()
