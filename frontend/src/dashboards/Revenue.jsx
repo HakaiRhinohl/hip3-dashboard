@@ -14,9 +14,7 @@ const DEX_META = {
   cash: { name: "Dreamcash", short: "Dreamcash", color: "#ffb020" },
 };
 
-// Known km protocol rates (growth mode = 10% of HL fee)
-// Used as fallback because on-chain balance ≠ cumulative earned (fees get claimed)
-const KM_GROWTH_BPS = 0.4074;
+// km normal-mode rate (hypothetical — what km would earn if growth mode were disabled)
 const KM_NORMAL_BPS = 4.0743;
 
 const fmt = (n) => {
@@ -132,9 +130,8 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const d = dexData;
   const fees = { deployer: d.deployer_fees || 0, builder: d.builder_fees || 0, total: d.total_fees || 0 };
-  // For km use known protocol rates — comparison endpoint already corrects deployer_fees via vol×rate,
-  // but guard here too in case backend data is stale/transitioning.
-  const effBps = isKm ? KM_GROWTH_BPS : (d.eff_total_bps || d.eff_deployer_bps || 0);
+  // Use backend-calculated effective bps (derived from real fee baseline, not estimates)
+  const effBps = d.eff_deployer_bps || d.eff_total_bps || 0;
   const normalBps = isKm ? KM_NORMAL_BPS : 0;
   const avg7d = d.avg_7d || 0;
   const avg30d = d.avg_30d || 0;

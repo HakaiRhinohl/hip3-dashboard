@@ -171,14 +171,13 @@ class RevenueCollector:
             discount = self.cfg.get("growth_discount")
             normal_deployer_bps = eff_deployer_bps / discount if discount else eff_deployer_bps
 
-        # For km: use known protocol rate for deployer fees — more reliable than the watermark
-        # because we know the exact rate (0.4074 bps in growth mode). The watermark handles
-        # builder fees which don't have a known fixed rate.
-        if self.dex == "km" and total_cum_vol > 0:
-            eff_deployer_bps = 0.4074
+        # For km: recalculate bps from the watermark-based deployer_fees so that
+        # daily_chart projections stay consistent. The deployer baseline ($92,700) is
+        # seeded in fee_db.DEPLOYER_BASELINES and grows as accountValue increases.
+        if self.dex == "km" and total_cum_vol > 0 and deployer_fees > 0:
+            eff_deployer_bps = (deployer_fees / total_cum_vol) * 10000
             discount = self.cfg.get("growth_discount")  # 0.10
-            normal_deployer_bps = eff_deployer_bps / discount  # 4.0743
-            deployer_fees = round(total_cum_vol * eff_deployer_bps / 10000, 2)
+            normal_deployer_bps = eff_deployer_bps / discount
             total_fees = deployer_fees + total_builder
 
         # Step 5: Net deposit

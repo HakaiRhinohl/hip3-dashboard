@@ -26,6 +26,12 @@ logger = logging.getLogger("kinetiq.fee_db")
 
 DB_PATH = os.environ.get("FEE_DB_PATH", "/data/fees.db")
 
+# Known historical deployer fee baselines — total earned BEFORE first withdrawal.
+# Used to seed the watermark DB on first run so historical earnings are not lost.
+DEPLOYER_BASELINES: dict[str, float] = {
+    "km": 92700.0,  # accountValue before withdrawal on 2026-03-30
+}
+
 
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -65,13 +71,15 @@ def update_deployer_cumulative(dex: str, current_balance: float) -> float:
         ).fetchone()
 
         if row is None:
-            # First time — bootstrap with current balance as the minimum known earned amount.
-            cumulative = current_balance
+            # First time — use known historical baseline if available (takes priority),
+            # otherwise start from current balance.
+            baseline = DEPLOYER_BASELINES.get(dex, 0.0)
+            cumulative = max(baseline, current_balance)
             conn.execute(
                 "INSERT INTO deployer_fee_watermarks (dex, last_balance, cumulative, updated_at) VALUES (?,?,?,?)",
                 (dex, current_balance, cumulative, now),
             )
-            logger.info(f"fee_db: bootstrapped {dex} deployer at ${current_balance:,.2f}")
+            logger.info(f"fee_db: bootstrapped {dex} deployer at ${cumulative:,.2f} (baseline=${baseline:,.0f}, current=${current_balance:,.2f})")
         else:
             last_balance = row["last_balance"]
             cumulative = row["cumulative"]

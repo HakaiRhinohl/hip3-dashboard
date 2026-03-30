@@ -211,13 +211,11 @@ class ComparisonCollector:
                 r["eff_deployer_bps"] = 0
                 r["eff_total_bps"] = 0
 
-            # For km: the fee_recipient balance reflects only unclaimed fees, not cumulative.
-            # Override with known growth-mode rate so stats reflect real historical earnings.
-            if dex == "km" and total_vol > 0:
-                r["eff_deployer_bps"] = KM_EFF_BPS_GROWTH
-                r["eff_total_bps"] = round(KM_EFF_BPS_GROWTH + (builder_total / total_vol * 10000), 4)
-                r["deployer_fees"] = round(total_vol * KM_EFF_BPS_GROWTH / 10000, 2)
-                r["total_fees"] = round(r["deployer_fees"] + builder_total, 2)
+            # For km: recalculate effective bps from watermark-based deployer_fees.
+            # The baseline ($92,700) is seeded in fee_db.DEPLOYER_BASELINES.
+            if dex == "km" and total_vol > 0 and r["deployer_fees"] > 0:
+                r["eff_deployer_bps"] = round((r["deployer_fees"] / total_vol) * 10000, 4)
+                r["eff_total_bps"] = round((r["total_fees"] / total_vol) * 10000, 4)
 
             # Implied Kinetiq revenue
             r["implied_km"] = {
