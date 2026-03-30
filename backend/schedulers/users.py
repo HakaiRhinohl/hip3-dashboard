@@ -37,8 +37,10 @@ DEX_START = {
     "vntl": date(2025, 11, 13),
 }
 
-# Last available date for all DEXes
-DATA_END = date(2026, 3, 23)
+# Last available date for all DEXes — always 2 days ago
+DATA_END = date.today() - timedelta(days=2)
+
+TRADFI_ASSET_CLASSES = ["equity", "commodity", "currency", "index"]
 
 S3_BUCKET   = "hydromancer-reservoir"
 S3_REGION   = "ap-northeast-1"
@@ -62,7 +64,9 @@ def _open_db() -> sqlite3.Connection:
             trade_count        INTEGER DEFAULT 0,
             primary_dex        TEXT,
             dex_volumes        TEXT,
-            first_seen_dex     TEXT
+            first_seen_dex     TEXT,
+            tradfi_vol_usd     REAL DEFAULT 0,
+            crypto_vol_usd     REAL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS daily_new_users (
@@ -79,6 +83,13 @@ def _open_db() -> sqlite3.Connection:
             PRIMARY KEY (dex, date)
         );
     """)
+    # Add new columns to existing DBs that pre-date this schema change
+    for col, typedef in [("tradfi_vol_usd", "REAL DEFAULT 0"), ("crypto_vol_usd", "REAL DEFAULT 0")]:
+        try:
+            conn.execute(f"ALTER TABLE user_stats ADD COLUMN {col} {typedef}")
+            conn.commit()
+        except Exception:
+            pass  # Column already exists — that's fine
     conn.commit()
     return conn
 
@@ -89,9 +100,10 @@ def _processed_dates(conn: sqlite3.Connection) -> set[tuple[str, str]]:
 
 
 def _total_dates() -> int:
+    data_end = date.today() - timedelta(days=2)
     total = 0
     for dex, start in DEX_START.items():
-        delta = (DATA_END - start).days + 1
+        delta = (data_end - start).days + 1
         total += max(0, delta)
     return total
 
@@ -131,30 +143,65 @@ def _download_parquet(dex: str, date_str: str, local_path: str) -> bool:
 def _process_parquet(local_path: str, dex: str, date_str: str) -> list[dict]:
     """
     Use DuckDB to aggregate fills from a local parquet file.
-    Returns list of {address, first_ts, last_ts, volume, trades}.
+    Groups by (address, asset_class) to compute tradfi vs crypto volume.
+    Returns list of {address, first_ts, last_ts, volume, trades, tradfi_vol, crypto_vol}.
     """
     try:
         import duckdb  # type: ignore
         conn = duckdb.connect()
-        rows = conn.execute(f"""
-            SELECT
-                address,
-                MIN(CAST(timestamp AS VARCHAR))::TEXT AS first_ts,
-                MAX(CAST(timestamp AS VARCHAR))::TEXT AS last_ts,
-                SUM(CAST(price AS DOUBLE) * CAST(size AS DOUBLE)) AS volume,
-                COUNT(*) AS trades
-            FROM read_parquet('{local_path}')
-            WHERE address IS NOT NULL AND address != ''
-            GROUP BY address
-        """).fetchall()
+
+        # Check if asset_class column exists
+        cols = conn.execute(f"DESCRIBE SELECT * FROM read_parquet('{local_path}') LIMIT 0").fetchall()
+        col_names = [c[0].lower() for c in cols]
+        has_asset_class = "asset_class" in col_names
+
+        if has_asset_class:
+            rows = conn.execute(f"""
+                WITH base AS (
+                    SELECT
+                        address,
+                        LOWER(COALESCE(asset_class, 'crypto')) AS asset_class,
+                        CAST(price AS DOUBLE) * CAST(size AS DOUBLE) AS notional,
+                        CAST(timestamp AS VARCHAR)::TEXT AS ts
+                    FROM read_parquet('{local_path}')
+                    WHERE address IS NOT NULL AND address != ''
+                )
+                SELECT
+                    address,
+                    MIN(ts) AS first_ts,
+                    MAX(ts) AS last_ts,
+                    SUM(notional) AS volume,
+                    COUNT(*) AS trades,
+                    SUM(CASE WHEN asset_class IN ('equity','commodity','currency','index') THEN notional ELSE 0 END) AS tradfi_vol,
+                    SUM(CASE WHEN asset_class = 'crypto' THEN notional ELSE 0 END) AS crypto_vol
+                FROM base
+                GROUP BY address
+            """).fetchall()
+        else:
+            rows = conn.execute(f"""
+                SELECT
+                    address,
+                    MIN(CAST(timestamp AS VARCHAR))::TEXT AS first_ts,
+                    MAX(CAST(timestamp AS VARCHAR))::TEXT AS last_ts,
+                    SUM(CAST(price AS DOUBLE) * CAST(size AS DOUBLE)) AS volume,
+                    COUNT(*) AS trades,
+                    0.0 AS tradfi_vol,
+                    SUM(CAST(price AS DOUBLE) * CAST(size AS DOUBLE)) AS crypto_vol
+                FROM read_parquet('{local_path}')
+                WHERE address IS NOT NULL AND address != ''
+                GROUP BY address
+            """).fetchall()
+
         conn.close()
         return [
             {
-                "address": r[0],
-                "first_ts": r[1],
-                "last_ts":  r[2],
-                "volume":   float(r[3] or 0),
-                "trades":   int(r[4] or 0),
+                "address":    r[0],
+                "first_ts":   r[1],
+                "last_ts":    r[2],
+                "volume":     float(r[3] or 0),
+                "trades":     int(r[4] or 0),
+                "tradfi_vol": float(r[5] or 0),
+                "crypto_vol": float(r[6] or 0),
             }
             for r in rows
         ]
@@ -169,15 +216,19 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict], dex: str, date_str:
     """Upsert aggregated rows into user_stats."""
     now_ts = datetime.now(timezone.utc).isoformat()
     for r in rows:
-        address  = r["address"]
-        vol      = r["volume"]
-        trades   = r["trades"]
-        row_date = date_str  # Use the file date as the trade date
+        address    = r["address"]
+        vol        = r["volume"]
+        trades     = r["trades"]
+        tradfi_vol = r.get("tradfi_vol", 0.0)
+        crypto_vol = r.get("crypto_vol", 0.0)
+        row_date   = date_str  # Use the file date as the trade date
 
         # Fetch existing
         existing = conn.execute(
             "SELECT first_hip3_date, last_hip3_date, hip3_volume_usd, "
-            "trade_count, primary_dex, dex_volumes, first_seen_dex "
+            "trade_count, primary_dex, dex_volumes, first_seen_dex, "
+            "COALESCE(tradfi_vol_usd, 0) AS tradfi_vol_usd, "
+            "COALESCE(crypto_vol_usd, 0) AS crypto_vol_usd "
             "FROM user_stats WHERE address = ?",
             (address,),
         ).fetchone()
@@ -186,29 +237,35 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict], dex: str, date_str:
             dex_vols: dict = json.loads(existing["dex_volumes"] or "{}")
             dex_vols[dex] = dex_vols.get(dex, 0.0) + vol
 
-            first_date = min(existing["first_hip3_date"], row_date) if existing["first_hip3_date"] else row_date
-            last_date  = max(existing["last_hip3_date"],  row_date) if existing["last_hip3_date"]  else row_date
-            total_vol  = (existing["hip3_volume_usd"] or 0.0) + vol
-            total_trd  = (existing["trade_count"] or 0) + trades
-            primary    = max(dex_vols, key=dex_vols.get)
-            first_dex  = existing["first_seen_dex"] or dex
+            first_date  = min(existing["first_hip3_date"], row_date) if existing["first_hip3_date"] else row_date
+            last_date   = max(existing["last_hip3_date"],  row_date) if existing["last_hip3_date"]  else row_date
+            total_vol   = (existing["hip3_volume_usd"] or 0.0) + vol
+            total_trd   = (existing["trade_count"] or 0) + trades
+            total_tradfi = (existing["tradfi_vol_usd"] or 0.0) + tradfi_vol
+            total_crypto = (existing["crypto_vol_usd"] or 0.0) + crypto_vol
+            primary     = max(dex_vols, key=dex_vols.get)
+            first_dex   = existing["first_seen_dex"] or dex
         else:
-            dex_vols   = {dex: vol}
-            first_date = row_date
-            last_date  = row_date
-            total_vol  = vol
-            total_trd  = trades
-            primary    = dex
-            first_dex  = dex
+            dex_vols     = {dex: vol}
+            first_date   = row_date
+            last_date    = row_date
+            total_vol    = vol
+            total_trd    = trades
+            total_tradfi = tradfi_vol
+            total_crypto = crypto_vol
+            primary      = dex
+            first_dex    = dex
 
         conn.execute("""
             INSERT OR REPLACE INTO user_stats
                 (address, first_hip3_date, last_hip3_date, hip3_volume_usd,
-                 trade_count, primary_dex, dex_volumes, first_seen_dex)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 trade_count, primary_dex, dex_volumes, first_seen_dex,
+                 tradfi_vol_usd, crypto_vol_usd)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             address, first_date, last_date, total_vol,
             total_trd, primary, json.dumps(dex_vols), first_dex,
+            total_tradfi, total_crypto,
         ))
 
 
@@ -249,10 +306,11 @@ def run_users_bootstrap():
     conn = _open_db()
     processed = _processed_dates(conn)
 
+    data_end = date.today() - timedelta(days=2)
     pending = []
     for dex, start in DEX_START.items():
         cur = start
-        while cur <= DATA_END:
+        while cur <= data_end:
             date_str = cur.strftime("%Y-%m-%d")
             if (dex, date_str) not in processed:
                 pending.append((dex, date_str))
@@ -305,15 +363,16 @@ def run_users_incremental():
     processed = _processed_dates(conn)
 
     today = date.today()
+    data_end = today - timedelta(days=2)
     # Look at yesterday (data lags 1 day) and maybe today
     pending = []
     for dex, start in DEX_START.items():
         # Find the latest processed date for this dex
         dex_dates = sorted([d for (dx, d) in processed if dx == dex])
         last_processed = date.fromisoformat(dex_dates[-1]) if dex_dates else start - timedelta(days=1)
-        # Process from day after last_processed up to yesterday
+        # Process from day after last_processed up to data_end
         cur = last_processed + timedelta(days=1)
-        end = min(today - timedelta(days=1), DATA_END)
+        end = min(today - timedelta(days=1), data_end)
         while cur <= end:
             date_str = cur.strftime("%Y-%m-%d")
             if (dex, date_str) not in processed:
@@ -446,6 +505,137 @@ def _query_top_venues(conn: sqlite3.Connection) -> list[dict]:
     return sorted(result, key=lambda x: x["unique_users"], reverse=True)
 
 
+def _query_filter(
+    conn: sqlite3.Connection,
+    period_days: int,
+    min_vol: float,
+    tradfi_ratio_min: float,
+    venues: list[str],
+) -> dict:
+    """
+    Filter users by various criteria and return aggregate stats.
+
+    period_days:      only users whose first_hip3_date is within last N days
+    min_vol:          minimum hip3_volume_usd
+    tradfi_ratio_min: minimum tradfi_vol_usd / hip3_volume_usd ratio (0.0-1.0)
+    venues:           filter by first_seen_dex (empty = all)
+    """
+    today = date.today()
+    cutoff = (today - timedelta(days=period_days)).isoformat()
+
+    params: list = [cutoff, min_vol]
+    where_clauses = [
+        "first_hip3_date >= ?",
+        "hip3_volume_usd >= ?",
+    ]
+
+    if tradfi_ratio_min > 0:
+        where_clauses.append(
+            "(hip3_volume_usd > 0 AND COALESCE(tradfi_vol_usd, 0) / hip3_volume_usd >= ?)"
+        )
+        params.append(tradfi_ratio_min)
+
+    if venues:
+        placeholders = ",".join(["?" for _ in venues])
+        where_clauses.append(f"first_seen_dex IN ({placeholders})")
+        params.extend(venues)
+
+    where_sql = " AND ".join(where_clauses)
+
+    total_row = conn.execute(
+        f"SELECT COUNT(*) FROM user_stats WHERE {where_sql}", params
+    ).fetchone()
+    total_matching = total_row[0] if total_row else 0
+
+    # Type A: tradfi ratio > 0.8
+    type_a_params = list(params)
+    type_a_where = where_sql + " AND hip3_volume_usd > 0 AND COALESCE(tradfi_vol_usd, 0) / hip3_volume_usd > 0.8"
+    type_a_row = conn.execute(
+        f"SELECT COUNT(*) FROM user_stats WHERE {type_a_where}", type_a_params
+    ).fetchone()
+    type_a_count = type_a_row[0] if type_a_row else 0
+
+    # Type B: the rest
+    type_b_count = total_matching - type_a_count
+
+    # By-dex breakdown
+    by_dex: dict[str, int] = {}
+    for dex in DEXES:
+        dex_params = list(params) + [dex]
+        dex_row = conn.execute(
+            f"SELECT COUNT(*) FROM user_stats WHERE {where_sql} AND first_seen_dex = ?",
+            dex_params,
+        ).fetchone()
+        by_dex[dex] = dex_row[0] if dex_row else 0
+
+    # Average volume
+    avg_row = conn.execute(
+        f"SELECT AVG(hip3_volume_usd) FROM user_stats WHERE {where_sql}", params
+    ).fetchone()
+    avg_volume = float(avg_row[0] or 0) if avg_row else 0.0
+
+    # Sample users: top 20 by volume
+    sample_rows = conn.execute(
+        f"SELECT address, hip3_volume_usd, first_hip3_date, first_seen_dex, "
+        f"COALESCE(tradfi_vol_usd, 0) AS tradfi_vol_usd "
+        f"FROM user_stats WHERE {where_sql} ORDER BY hip3_volume_usd DESC LIMIT 20",
+        params,
+    ).fetchall()
+    sample_users = [
+        {
+            "address":       r["address"],
+            "volume":        round(float(r["hip3_volume_usd"] or 0), 2),
+            "first_date":    r["first_hip3_date"],
+            "first_dex":     r["first_seen_dex"],
+            "tradfi_ratio":  round(
+                float(r["tradfi_vol_usd"] or 0) / float(r["hip3_volume_usd"] or 1), 4
+            ) if (r["hip3_volume_usd"] or 0) > 0 else 0.0,
+        }
+        for r in sample_rows
+    ]
+
+    return {
+        "total_matching": total_matching,
+        "type_a_count":   type_a_count,
+        "type_b_count":   type_b_count,
+        "by_dex":         by_dex,
+        "avg_volume":     round(avg_volume, 2),
+        "sample_users":   sample_users,
+    }
+
+
+def _query_type_breakdown(conn: sqlite3.Connection) -> dict:
+    """
+    Returns user type distribution:
+      type_a = tradfi_vol_usd / hip3_volume_usd > 0.8 (and hip3_volume_usd > 0)
+      type_b = the rest
+    """
+    total_row = conn.execute("SELECT COUNT(*) FROM user_stats").fetchone()
+    total = total_row[0] if total_row else 0
+
+    type_a_row = conn.execute(
+        "SELECT COUNT(*) FROM user_stats "
+        "WHERE hip3_volume_usd > 0 "
+        "AND COALESCE(tradfi_vol_usd, 0) / hip3_volume_usd > 0.8"
+    ).fetchone()
+    type_a = type_a_row[0] if type_a_row else 0
+    type_b = total - type_a
+
+    avg_ratio_row = conn.execute(
+        "SELECT AVG(COALESCE(tradfi_vol_usd, 0) / hip3_volume_usd) "
+        "FROM user_stats WHERE hip3_volume_usd > 0"
+    ).fetchone()
+    avg_tradfi_ratio = float(avg_ratio_row[0] or 0) if avg_ratio_row else 0.0
+
+    return {
+        "type_a":          type_a,
+        "type_b":          type_b,
+        "type_a_pct":      round(type_a / total * 100, 1) if total > 0 else 0.0,
+        "type_b_pct":      round(type_b / total * 100, 1) if total > 0 else 0.0,
+        "avg_tradfi_ratio": round(avg_tradfi_ratio, 4),
+    }
+
+
 # ── UsersCollector ─────────────────────────────────────────────────────────────
 
 class UsersCollector:
@@ -526,3 +716,42 @@ class UsersCollector:
         except Exception as e:
             logger.warning(f"UsersCollector.get_top_venues() failed: {e}")
             return []
+
+    def get_filter(
+        self,
+        period_days: int = 30,
+        min_vol: float = 0.0,
+        tradfi_ratio_min: float = 0.0,
+        venues: list[str] | None = None,
+    ) -> dict:
+        try:
+            conn = _open_db()
+            data = _query_filter(conn, period_days, min_vol, tradfi_ratio_min, venues or [])
+            conn.close()
+            return data
+        except Exception as e:
+            logger.warning(f"UsersCollector.get_filter() failed: {e}")
+            return {
+                "total_matching": 0,
+                "type_a_count": 0,
+                "type_b_count": 0,
+                "by_dex": {},
+                "avg_volume": 0.0,
+                "sample_users": [],
+            }
+
+    def get_type_breakdown(self) -> dict:
+        try:
+            conn = _open_db()
+            data = _query_type_breakdown(conn)
+            conn.close()
+            return data
+        except Exception as e:
+            logger.warning(f"UsersCollector.get_type_breakdown() failed: {e}")
+            return {
+                "type_a": 0,
+                "type_b": 0,
+                "type_a_pct": 0.0,
+                "type_b_pct": 0.0,
+                "avg_tradfi_ratio": 0.0,
+            }

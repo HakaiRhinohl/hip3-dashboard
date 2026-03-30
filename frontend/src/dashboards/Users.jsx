@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid,
@@ -27,8 +27,23 @@ const DEX_NAMES = {
 };
 
 const DEXES = ["km", "xyz", "flx", "cash", "hyna", "vntl"];
+const PERIODS = ["1d", "7d", "30d", "90d"];
+const MIN_VOL_OPTIONS = [
+  { label: "$0",    value: 0 },
+  { label: "$100",  value: 100 },
+  { label: "$1K",   value: 1000 },
+  { label: "$10K",  value: 10000 },
+  { label: "$100K", value: 100000 },
+];
+const TRADFI_RATIO_OPTIONS = [
+  { label: "Any",  value: 0 },
+  { label: ">50%", value: 0.5 },
+  { label: ">80%", value: 0.8 },
+];
 
-const PERIODS = ["7d", "30d", "90d"];
+const TYPE_A_COLOR = "#a78bfa";
+const TYPE_B_COLOR = "#38bdf8";
+const NEW_COLOR    = "#34d399";
 
 const P = {
   bg:     "#060911",
@@ -42,8 +57,14 @@ const P = {
 // ── Formatters ─────────────────────────────────────────────────────────────────
 
 const fmtN = (n) => (n == null ? "—" : Number(n).toLocaleString());
+const fmtUSD = (n) => {
+  if (n == null) return "—";
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${Number(n).toFixed(0)}`;
+};
 
-// ── Tooltip ────────────────────────────────────────────────────────────────────
+// ── Tooltips ───────────────────────────────────────────────────────────────────
 
 const BarTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -149,6 +170,335 @@ function BootstrapBanner({ status }) {
   );
 }
 
+function TabSelector({ options, value, onChange, accentColor = TYPE_A_COLOR }) {
+  return (
+    <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${P.border}` }}>
+      {options.map((opt) => {
+        const v = typeof opt === "object" ? opt.value : opt;
+        const label = typeof opt === "object" ? opt.label : opt;
+        const active = v === value;
+        return (
+          <button
+            key={String(v)}
+            onClick={() => onChange(v)}
+            style={{
+              background: "transparent",
+              color: active ? accentColor : P.muted,
+              border: "none",
+              borderBottom: active ? `2px solid ${accentColor}` : "2px solid transparent",
+              padding: "6px 14px", fontSize: 11, fontWeight: 600,
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Filter Panel ───────────────────────────────────────────────────────────────
+
+function FilterPanel({ onApply, loading }) {
+  const [filterPeriod, setFilterPeriod] = useState(30);
+  const [minVol, setMinVol] = useState(0);
+  const [tradfiRatio, setTradfiRatio] = useState(0);
+  const [selectedVenues, setSelectedVenues] = useState(new Set(DEXES));
+
+  const toggleVenue = (dex) => {
+    setSelectedVenues((prev) => {
+      const next = new Set(prev);
+      if (next.has(dex)) {
+        next.delete(dex);
+      } else {
+        next.add(dex);
+      }
+      return next;
+    });
+  };
+
+  const handleApply = () => {
+    onApply({
+      period: filterPeriod,
+      min_vol: minVol,
+      tradfi_ratio: tradfiRatio,
+      venues: [...selectedVenues],
+    });
+  };
+
+  const periodOpts = PERIODS.map((p) => ({ label: p, value: parseInt(p, 10) }));
+
+  return (
+    <div style={{
+      background: P.card, border: `1px solid ${P.border}`,
+      borderRadius: 10, padding: 20, marginBottom: 16,
+    }}>
+      <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 16px", fontWeight: 600 }}>
+        User Filter
+      </h3>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 20, alignItems: "start" }}>
+        {/* Period */}
+        <div>
+          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
+            Period
+          </div>
+          <TabSelector
+            options={periodOpts}
+            value={filterPeriod}
+            onChange={setFilterPeriod}
+            accentColor={TYPE_A_COLOR}
+          />
+        </div>
+
+        {/* Min Volume */}
+        <div>
+          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
+            Min Volume
+          </div>
+          <TabSelector
+            options={MIN_VOL_OPTIONS}
+            value={minVol}
+            onChange={setMinVol}
+            accentColor="#ffb020"
+          />
+        </div>
+
+        {/* TradFi Ratio */}
+        <div>
+          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
+            TradFi Ratio
+          </div>
+          <TabSelector
+            options={TRADFI_RATIO_OPTIONS}
+            value={tradfiRatio}
+            onChange={setTradfiRatio}
+            accentColor={TYPE_A_COLOR}
+          />
+        </div>
+
+        {/* Venue Selector */}
+        <div>
+          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
+            Venues
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {DEXES.map((dex) => {
+              const checked = selectedVenues.has(dex);
+              return (
+                <label
+                  key={dex}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    cursor: "pointer", fontSize: 10, fontWeight: 600,
+                    color: checked ? DEX_COLORS[dex] : P.muted,
+                    padding: "3px 6px",
+                    background: checked ? `${DEX_COLORS[dex]}18` : "transparent",
+                    border: `1px solid ${checked ? DEX_COLORS[dex] : P.border}`,
+                    borderRadius: 4,
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleVenue(dex)}
+                    style={{ display: "none" }}
+                  />
+                  {DEX_NAMES[dex]}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={handleApply}
+          disabled={loading}
+          style={{
+            background: loading ? P.subtle : TYPE_A_COLOR,
+            color: loading ? P.muted : "#0a0020",
+            border: "none",
+            borderRadius: 6,
+            padding: "8px 20px",
+            fontSize: 11, fontWeight: 700,
+            cursor: loading ? "not-allowed" : "pointer",
+            fontFamily: "inherit",
+            transition: "all 0.15s ease",
+          }}
+        >
+          {loading ? "Filtering..." : "Apply Filter"}
+        </button>
+        <div style={{ color: P.muted, fontSize: 9, fontStyle: "italic" }}>
+          Proxy based on asset class distribution within HIP-3 trades. Type A = &gt;80% equity/commodity/forex
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Filter Results ─────────────────────────────────────────────────────────────
+
+function FilterResults({ result, filterParams, timelineData, timelineLoading, xInterval }) {
+  if (!result) return null;
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {/* Result stat cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+        <StatCard
+          title="Matching Users"
+          value={fmtN(result.total_matching)}
+          subtitle={`Period: last ${filterParams?.period || 30}d`}
+          accentColor={TYPE_A_COLOR}
+        />
+        <StatCard
+          title="Type A Matching"
+          value={fmtN(result.type_a_count)}
+          subtitle=">80% TradFi volume"
+          accentColor={TYPE_A_COLOR}
+        />
+        <StatCard
+          title="Type B Matching"
+          value={fmtN(result.type_b_count)}
+          subtitle="Crypto-native / mixed"
+          accentColor={TYPE_B_COLOR}
+        />
+        <StatCard
+          title="Avg Volume"
+          value={fmtUSD(result.avg_volume)}
+          subtitle="Per matching user"
+          accentColor={NEW_COLOR}
+        />
+      </div>
+
+      {/* New users per day chart for filtered period */}
+      <div style={{
+        background: P.card, border: `1px solid ${P.border}`,
+        borderRadius: 10, padding: 20, marginBottom: 12,
+      }}>
+        <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+          New Users per Day (filtered period)
+        </h3>
+        <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
+          First-time HIP-3 traders · stacked by venue · last {filterParams?.period || 30}d
+        </p>
+        {timelineLoading ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 220, color: P.muted, fontSize: 11 }}>
+            Loading chart data...
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={timelineData} barCategoryGap="20%">
+              <CartesianGrid strokeDasharray="3 3" stroke={P.subtle} opacity={0.3} vertical={false} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: P.muted, fontSize: 9 }}
+                tickLine={false}
+                interval={xInterval}
+              />
+              <YAxis
+                tick={{ fill: P.muted, fontSize: 9 }}
+                tickLine={false}
+                axisLine={false}
+                allowDecimals={false}
+              />
+              <Tooltip content={<BarTip />} />
+              <Legend
+                wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
+                formatter={(value) => DEX_NAMES[value] || value}
+              />
+              {DEXES.map((dex, i) => (
+                <Bar
+                  key={dex}
+                  dataKey={dex}
+                  name={dex}
+                  fill={DEX_COLORS[dex]}
+                  stackId="s"
+                  opacity={0.85}
+                  barSize={8}
+                  radius={i === DEXES.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Sample users table */}
+      {result.sample_users && result.sample_users.length > 0 && (
+        <div style={{
+          background: P.card, border: `1px solid ${P.border}`,
+          borderRadius: 10, padding: 20,
+        }}>
+          <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+            Top Matching Users
+          </h3>
+          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
+            Top 20 by volume within filter
+          </p>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${P.border}` }}>
+                {["Address", "Volume", "TradFi Ratio", "First Date", "First DEX"].map((h, i) => (
+                  <th key={i} style={{
+                    padding: "6px 8px",
+                    textAlign: i === 0 ? "left" : "right",
+                    color: P.muted, fontWeight: 600, fontSize: 9,
+                    textTransform: "uppercase",
+                  }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {result.sample_users.map((u, idx) => {
+                const ratio = u.tradfi_ratio || 0;
+                const isTypeA = ratio > 0.8;
+                const ratioColor = isTypeA ? TYPE_A_COLOR : TYPE_B_COLOR;
+                return (
+                  <tr key={idx} style={{ borderBottom: `1px solid ${P.subtle}` }}>
+                    <td style={{ padding: "7px 8px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: P.muted }}>
+                      {u.address ? `${u.address.slice(0, 8)}...${u.address.slice(-6)}` : "—"}
+                    </td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", fontWeight: 700 }}>
+                      {fmtUSD(u.volume)}
+                    </td>
+                    <td style={{ padding: "7px 8px", textAlign: "right" }}>
+                      <span style={{
+                        color: ratioColor,
+                        background: `${ratioColor}18`,
+                        borderRadius: 3,
+                        padding: "2px 6px",
+                        fontWeight: 700,
+                        fontSize: 9,
+                      }}>
+                        {(ratio * 100).toFixed(0)}%
+                      </span>
+                    </td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", color: P.muted }}>
+                      {u.first_date || "—"}
+                    </td>
+                    <td style={{ padding: "7px 8px", textAlign: "right" }}>
+                      <span style={{ color: DEX_COLORS[u.first_dex] || P.muted, fontWeight: 700 }}>
+                        {DEX_NAMES[u.first_dex] || u.first_dex || "—"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main dashboard ─────────────────────────────────────────────────────────────
 
 export default function UsersDashboard() {
@@ -156,6 +506,9 @@ export default function UsersDashboard() {
     data: summary, loading: summaryLoading, error: summaryError, refetch,
   } = useApiData("/api/users/summary");
 
+  const { data: typeBreakdown } = useApiData("/api/users/type_breakdown");
+
+  // Period for the bottom stacked bar chart
   const [period, setPeriod] = useState("30d");
   const periodDays = parseInt(period, 10);
 
@@ -164,7 +517,35 @@ export default function UsersDashboard() {
 
   const { data: topVenuesRaw } = useApiData("/api/users/top_venues");
 
-  // Stacked bar chart data
+  // Filter state
+  const [filterResult, setFilterResult] = useState(null);
+  const [filterParams, setFilterParams] = useState(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+
+  // Timeline for filtered period
+  const [filterPeriodDays, setFilterPeriodDays] = useState(30);
+  const { data: filterTimelineRaw, loading: filterTimelineLoading } =
+    useApiData(filterParams ? `/api/users/timeline?period=${filterParams.period}` : null);
+
+  const handleApplyFilter = useCallback(async ({ period: p, min_vol, tradfi_ratio, venues }) => {
+    setFilterPeriodDays(p);
+    setFilterLoading(true);
+    try {
+      const venueStr = venues.join(",");
+      const url = `/api/users/filter?period=${p}&min_vol=${min_vol}&tradfi_ratio=${tradfi_ratio}&venues=${encodeURIComponent(venueStr)}`;
+      const apiBase = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${apiBase}${url}`);
+      const data = await res.json();
+      setFilterResult(data);
+      setFilterParams({ period: p, min_vol, tradfi_ratio, venues });
+    } catch (err) {
+      console.error("Filter API error:", err);
+    } finally {
+      setFilterLoading(false);
+    }
+  }, []);
+
+  // Main stacked bar chart data
   const timelineData = useMemo(() => {
     if (!timelineRaw || !Array.isArray(timelineRaw)) return [];
     return timelineRaw.map((d) => ({
@@ -173,16 +554,25 @@ export default function UsersDashboard() {
     }));
   }, [timelineRaw]);
 
+  // Filter period timeline data
+  const filterTimelineData = useMemo(() => {
+    if (!filterTimelineRaw || !Array.isArray(filterTimelineRaw)) return [];
+    return filterTimelineRaw.map((d) => ({
+      date: d.date.slice(5),
+      ...Object.fromEntries(DEXES.map((dex) => [dex, d[dex] || 0])),
+    }));
+  }, [filterTimelineRaw]);
+
   // Donut chart data
   const donutData = useMemo(() => {
     if (!topVenuesRaw || !Array.isArray(topVenuesRaw)) return [];
     return topVenuesRaw
       .filter((v) => v.unique_users > 0)
       .map((v) => ({
-        name:         v.dex,
-        value:        v.unique_users,
-        pct:          v.pct,
-        fill:         DEX_COLORS[v.dex] || "#888",
+        name:  v.dex,
+        value: v.unique_users,
+        pct:   v.pct,
+        fill:  DEX_COLORS[v.dex] || "#888",
       }));
   }, [topVenuesRaw]);
 
@@ -193,14 +583,21 @@ export default function UsersDashboard() {
     return 9;
   }, [periodDays]);
 
+  const filterXInterval = useMemo(() => {
+    if (filterPeriodDays <= 7)  return 0;
+    if (filterPeriodDays <= 30) return 4;
+    return 9;
+  }, [filterPeriodDays]);
+
   if (summaryLoading && !summary) return <Loading message="Loading users data..." />;
   if (summaryError && !summary)   return <ErrorState error={summaryError} onRetry={refetch} />;
 
-  const s = summary || {};
-  const bootstrapStatus   = s.bootstrap_status || {};
-  const totalUsers        = s.total_unique_users || 0;
-  const newUsers          = s.new_users || {};
-  const byDex             = s.by_dex || {};
+  const s               = summary || {};
+  const bootstrapStatus = s.bootstrap_status || {};
+  const totalUsers      = s.total_unique_users || 0;
+  const newUsers        = s.new_users || {};
+  const byDex           = s.by_dex || {};
+  const tb              = typeBreakdown || {};
 
   return (
     <div style={{
@@ -223,56 +620,56 @@ export default function UsersDashboard() {
       {/* Top row: 4 stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
         <StatCard
-          title="Total Users"
+          title="Total HIP-3 Users"
           value={fmtN(totalUsers)}
           subtitle="All-time unique HIP-3 traders"
-          accentColor="#a78bfa"
+          accentColor={TYPE_A_COLOR}
           large
         />
         <StatCard
-          title="New (7d)"
-          value={fmtN(newUsers["7d"])}
-          subtitle="First-time traders in 7 days"
-          accentColor={DEX_COLORS.km}
+          title="Type A (TradFi Proxy)"
+          value={fmtN(tb.type_a)}
+          subtitle={`${tb.type_a_pct || 0}% of all users · >80% non-crypto assets`}
+          accentColor={TYPE_A_COLOR}
+        />
+        <StatCard
+          title="Type B (Crypto-Native)"
+          value={fmtN(tb.type_b)}
+          subtitle={`${tb.type_b_pct || 0}% of all users · expanding to HIP-3`}
+          accentColor={TYPE_B_COLOR}
         />
         <StatCard
           title="New (30d)"
           value={fmtN(newUsers["30d"])}
           subtitle="First-time traders in 30 days"
-          accentColor={DEX_COLORS.xyz}
-        />
-        <StatCard
-          title="New (90d)"
-          value={fmtN(newUsers["90d"])}
-          subtitle="First-time traders in 90 days"
-          accentColor={DEX_COLORS.hyna}
+          accentColor={NEW_COLOR}
         />
       </div>
 
-      {/* Period selector for bar chart */}
+      {/* Filter Panel */}
+      <FilterPanel onApply={handleApplyFilter} loading={filterLoading} />
+
+      {/* Filter Results */}
+      <FilterResults
+        result={filterResult}
+        filterParams={filterParams}
+        timelineData={filterTimelineData}
+        timelineLoading={filterTimelineLoading}
+        xInterval={filterXInterval}
+      />
+
+      {/* Period selector for main bar chart */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <span style={{ color: P.muted, fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>Period</span>
-        <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${P.border}` }}>
-          {PERIODS.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              style={{
-                background: "transparent",
-                color: period === p ? "#a78bfa" : P.muted,
-                border: "none",
-                borderBottom: period === p ? "2px solid #a78bfa" : "2px solid transparent",
-                padding: "6px 14px", fontSize: 11, fontWeight: 600,
-                cursor: "pointer", fontFamily: "inherit",
-              }}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
+        <TabSelector
+          options={["7d", "30d", "90d"]}
+          value={period}
+          onChange={setPeriod}
+          accentColor={TYPE_A_COLOR}
+        />
       </div>
 
-      {/* Second row: stacked bar chart */}
+      {/* Stacked bar chart */}
       <div style={{
         background: P.card, border: `1px solid ${P.border}`,
         borderRadius: 10, padding: 20, marginBottom: 12,
@@ -325,7 +722,7 @@ export default function UsersDashboard() {
         )}
       </div>
 
-      {/* Third row: Donut + venue table */}
+      {/* Bottom row: Donut + venue table */}
       <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 12 }}>
 
         {/* Donut chart */}
@@ -454,6 +851,7 @@ export default function UsersDashboard() {
         {bootstrapStatus.complete
           ? " · Bootstrap complete"
           : ` · Bootstrap ${bootstrapStatus.processed_dates || 0}/${bootstrapStatus.total_dates || 0} dates`}
+        {" · "}Avg TradFi ratio: {tb.avg_tradfi_ratio != null ? `${(tb.avg_tradfi_ratio * 100).toFixed(1)}%` : "—"}
       </div>
     </div>
   );

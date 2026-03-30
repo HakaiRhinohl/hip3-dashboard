@@ -206,3 +206,28 @@ def get_users_top_venues():
     Returns: [{dex, unique_users, pct}, ...]
     """
     return users_collector.get_top_venues()
+
+
+@app.get("/api/users/filter")
+async def users_filter(
+    period: int = Query(default=30, ge=1, le=365),
+    min_vol: float = Query(default=0.0, ge=0),
+    tradfi_ratio: float = Query(default=0.0, ge=0.0, le=1.0),
+    venues: str = Query(default=""),
+):
+    """
+    Filter HIP-3 users by period, minimum volume, TradFi ratio, and venues.
+    Returns: {total_matching, type_a_count, type_b_count, by_dex, avg_volume, sample_users}
+    """
+    venue_list = [v.strip() for v in venues.split(",") if v.strip()] if venues else []
+    return users_collector.get_filter(period, min_vol, tradfi_ratio, venue_list)
+
+
+@app.get("/api/users/type_breakdown")
+async def users_type_breakdown():
+    """
+    All-time Type A / Type B user breakdown.
+    type_a = tradfi_vol_usd / hip3_volume_usd > 0.8
+    Returns: {type_a, type_b, type_a_pct, type_b_pct, avg_tradfi_ratio}
+    """
+    return users_collector.get_type_breakdown()
