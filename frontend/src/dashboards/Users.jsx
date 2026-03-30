@@ -265,19 +265,6 @@ function FilterPanel({ onApply, loading }) {
           </div>
         </div>
 
-        {/* TradFi Ratio (old slot now used for venues) */}
-        <div>
-          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
-            TradFi Ratio
-          </div>
-          <TabSelector
-            options={TRADFI_RATIO_OPTIONS}
-            value={tradfiRatio}
-            onChange={setTradfiRatio}
-            accentColor={TYPE_A_COLOR}
-          />
-        </div>
-
         {/* Venue Selector */}
         <div>
           <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
