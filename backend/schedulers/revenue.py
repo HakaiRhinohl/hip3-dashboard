@@ -165,6 +165,15 @@ class RevenueCollector:
             discount = self.cfg.get("growth_discount")
             normal_deployer_bps = eff_deployer_bps / discount if discount else eff_deployer_bps
 
+        # For km: clearinghouseState.accountValue is the CURRENT unclaimed balance, not cumulative.
+        # Use the known protocol growth-mode rate (0.4074 bps) to reflect real historical earnings.
+        if self.dex == "km" and total_cum_vol > 0:
+            eff_deployer_bps = 0.4074
+            discount = self.cfg.get("growth_discount")  # 0.10
+            normal_deployer_bps = eff_deployer_bps / discount  # 4.0743
+            deployer_fees = round(total_cum_vol * eff_deployer_bps / 10000, 2)
+            total_fees = deployer_fees + total_builder
+
         # Step 5: Net deposit
         dex_status = hl_post({"type": "perpDexStatus", "dex": self.dex}, f"status {self.dex}")
         total_net_deposit = float(dex_status.get("totalNetDeposit", "0")) if dex_status else 0

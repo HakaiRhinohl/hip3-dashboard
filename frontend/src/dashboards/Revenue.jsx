@@ -14,6 +14,11 @@ const DEX_META = {
   cash: { name: "Dreamcash", short: "Dreamcash", color: "#ffb020" },
 };
 
+// Known km protocol rates (growth mode = 10% of HL fee)
+// Used as fallback because on-chain balance ≠ cumulative earned (fees get claimed)
+const KM_GROWTH_BPS = 0.4074;
+const KM_NORMAL_BPS = 4.0743;
+
 const fmt = (n) => {
   if (n == null || isNaN(n)) return "—";
   if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
@@ -98,15 +103,21 @@ export default function RevenueDashboard({ dexId = "km" }) {
       });
     }
     if (!dexData || !chartData.length) return [];
+    // Use eff_total_bps (includes builder) if available, else eff_deployer_bps
     const bps = dexData.eff_total_bps || dexData.eff_deployer_bps || 0;
+    if (bps === 0) return [];
     let cum = 0;
     return chartData.map((d) => {
-      const fee = d.daily_volume_usd * bps / 10000;
-      cum += fee;
+      const totalFee = d.daily_volume_usd * bps / 10000;
+      const builderFee = dexData.total_fees > 0 && dexData.builder_fees > 0
+        ? totalFee * (dexData.builder_fees / dexData.total_fees)
+        : 0;
+      const deployerFee = totalFee - builderFee;
+      cum += totalFee;
       return {
         ...d,
-        deployer_fee_growth: Math.round(fee * 100) / 100,
-        builder_fee: 0,
+        deployer_fee_growth: Math.round(deployerFee * 100) / 100,
+        builder_fee: Math.round(builderFee * 100) / 100,
         cum_total_g: cum,
       };
     });
@@ -121,8 +132,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const d = dexData;
   const fees = { deployer: d.deployer_fees || 0, builder: d.builder_fees || 0, total: d.total_fees || 0 };
-  const effBps = d.eff_total_bps || d.eff_deployer_bps || 0;
-  const normalBps = isKm && effBps > 0 ? effBps / 0.10 : 0;
+  // For km use known protocol rates — comparison endpoint already corrects deployer_fees via vol×rate,
+  // but guard here too in case backend data is stale/transitioning.
+  const effBps = isKm ? KM_GROWTH_BPS : (d.eff_total_bps || d.eff_deployer_bps || 0);
+  const normalBps = isKm ? KM_NORMAL_BPS : 0;
   const avg7d = d.avg_7d || 0;
   const avg30d = d.avg_30d || 0;
 
@@ -198,7 +211,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   <YAxis yAxisId="c" orientation="right" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
                   <Bar yAxisId="d" dataKey="deployer_fee_growth" name="Deployer Fee" fill={accent} stackId="g" opacity={0.85} />
-                  {isKm && <Bar yAxisId="d" dataKey="builder_fee" name="Builder Fee" fill={C.cyan} stackId="g" opacity={0.85} radius={[2, 2, 0, 0]} />}
+                  {fees.builder > 0 && <Bar yAxisId="d" dataKey="builder_fee" name="Builder Fee" fill={C.cyan} stackId="g" opacity={0.85} radius={[2, 2, 0, 0]} />}
                   <Line yAxisId="c" type="monotone" dataKey="cum_total_g" name="Cumulative" stroke={accent} strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>

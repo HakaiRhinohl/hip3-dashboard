@@ -50,10 +50,12 @@ EARLIEST_MS = int(datetime(2025, 10, 1).timestamp() * 1000)
 
 def try_candle(coin: str, pdex: str, start_ms: int, end_ms: int) -> list:
     """Try downloading candles with multiple name formats."""
+    short = coin.split(":")[-1] if ":" in coin else coin
     attempts = [
         (coin, pdex),
-        (coin.split(":")[-1] if ":" in coin else coin, pdex),
+        (short, pdex),
         (coin, None),
+        (short, None),  # final fallback: short name, no dex filter
     ]
     for c, p in attempts:
         payload = {
@@ -206,6 +208,14 @@ class ComparisonCollector:
             else:
                 r["eff_deployer_bps"] = 0
                 r["eff_total_bps"] = 0
+
+            # For km: the fee_recipient balance reflects only unclaimed fees, not cumulative.
+            # Override with known growth-mode rate so stats reflect real historical earnings.
+            if dex == "km" and total_vol > 0:
+                r["eff_deployer_bps"] = KM_EFF_BPS_GROWTH
+                r["eff_total_bps"] = round(KM_EFF_BPS_GROWTH + (builder_total / total_vol * 10000), 4)
+                r["deployer_fees"] = round(total_vol * KM_EFF_BPS_GROWTH / 10000, 2)
+                r["total_fees"] = round(r["deployer_fees"] + builder_total, 2)
 
             # Implied Kinetiq revenue
             r["implied_km"] = {
