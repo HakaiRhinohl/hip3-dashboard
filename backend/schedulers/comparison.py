@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from schedulers import hl_post
+from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 
 logger = logging.getLogger("kinetiq.comparison")
 
@@ -131,18 +132,21 @@ class ComparisonCollector:
                     if k not in r or not r[k]:
                         r[k] = v
 
-            # Deployer fees
+            # Deployer fees: clearinghouseState.accountValue is CURRENT unclaimed balance.
+            # Watermark accumulates earnings across withdrawal events.
             if r.get("fee_recipient"):
                 ch = hl_post(
                     {"type": "clearinghouseState", "user": r["fee_recipient"], "dex": dex},
                     f"CH {dex}",
                 )
-                r["deployer_fees"] = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
+                deployer_balance = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
+                r["deployer_fees"] = update_deployer_cumulative(dex, deployer_balance)
             else:
                 r["deployer_fees"] = 0
 
-            # Builder fees — query all known builder addresses + fee_recipient + deployer (deduped)
-            builder_total = 0
+            # Builder fees: referral.tokenToState[x].builderRewards is CUMULATIVE (claimed + unclaimed).
+            # Sum ALL token types (USDC, USDH, USDE, USDT0 — all USD-pegged stablecoins).
+            builder_total = 0.0
             queried_addrs = set()
 
             def _add_builder_rewards(addr, label):
@@ -151,16 +155,14 @@ class ComparisonCollector:
                     return
                 queried_addrs.add(addr)
                 ref = hl_post({"type": "referral", "user": addr}, f"ref {dex} {label}")
-                br = float(ref.get("builderRewards", "0")) if ref else 0
-                if br > 0:
-                    builder_total += br
+                builder_total += parse_builder_rewards(ref)
 
             if dex in KNOWN_ADDRESSES:
                 for bkey in ["trading_builder", "staking_builder", "builder"]:
                     _add_builder_rewards(KNOWN_ADDRESSES[dex].get(bkey), bkey)
 
             _add_builder_rewards(r.get("fee_recipient"), "fee_recipient")
-            _add_builder_rewards(r.get("deployer_addr"), "deployer")
+            _add_builder_rewards(r.get("deployer_addr"), "deployer_addr")
 
             r["builder_fees"] = builder_total
             r["total_fees"] = r["deployer_fees"] + builder_total

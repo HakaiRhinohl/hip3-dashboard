@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from schedulers import hl_post
+from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 
 logger = logging.getLogger("kinetiq.revenue")
 
@@ -136,12 +137,17 @@ class RevenueCollector:
             days_since_launch = 1
 
         # Step 4: On-chain fees
+        # Deployer fees: clearinghouseState.accountValue is the CURRENT unclaimed balance.
+        # Use watermark to accumulate across withdrawal events.
         ch = hl_post(
             {"type": "clearinghouseState", "user": self.cfg["fee_recipient"], "dex": self.dex},
             f"CH {self.dex}",
         )
-        deployer_fees = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
+        deployer_balance = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
+        deployer_fees = update_deployer_cumulative(self.dex, deployer_balance)
 
+        # Builder fees: referral.tokenToState[x].builderRewards is already CUMULATIVE
+        # (claimedRewards + unclaimedRewards). Sum ALL token types (USDC, USDH, USDE, USDT0).
         total_builder = 0.0
         queried = set()
         for addr in self.cfg["builders"]:
@@ -149,7 +155,7 @@ class RevenueCollector:
                 continue
             queried.add(addr)
             ref = hl_post({"type": "referral", "user": addr}, f"ref {addr[:8]}")
-            total_builder += float(ref.get("builderRewards", "0")) if ref else 0
+            total_builder += parse_builder_rewards(ref)
 
         total_fees = deployer_fees + total_builder
 
@@ -165,8 +171,9 @@ class RevenueCollector:
             discount = self.cfg.get("growth_discount")
             normal_deployer_bps = eff_deployer_bps / discount if discount else eff_deployer_bps
 
-        # For km: clearinghouseState.accountValue is the CURRENT unclaimed balance, not cumulative.
-        # Use the known protocol growth-mode rate (0.4074 bps) to reflect real historical earnings.
+        # For km: use known protocol rate for deployer fees — more reliable than the watermark
+        # because we know the exact rate (0.4074 bps in growth mode). The watermark handles
+        # builder fees which don't have a known fixed rate.
         if self.dex == "km" and total_cum_vol > 0:
             eff_deployer_bps = 0.4074
             discount = self.cfg.get("growth_discount")  # 0.10

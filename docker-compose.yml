@@ -9,6 +9,7 @@ services:
       - TZ=UTC
       - LIQUIDITY_DB_PATH=/data/liquidity.db
       - USERS_DB_PATH=/data/users.db
+      - FEE_DB_PATH=/data/fees.db
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=ap-northeast-1

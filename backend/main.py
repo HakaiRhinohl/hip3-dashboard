@@ -16,6 +16,7 @@ from schedulers.revenue import RevenueCollector
 from schedulers.comparison import ComparisonCollector
 from schedulers.liquidity import LiquidityCollector
 from schedulers.users import UsersCollector
+from schedulers.fee_db import init_fee_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +72,9 @@ async def run_users():
 async def lifespan(app: FastAPI):
     """Run initial data collection, then start scheduler."""
     logger.info("Starting initial data collection...")
+
+    # Initialize fee accumulator DB (watermark persistence for claim-resistant fee tracking)
+    init_fee_db()
 
     # Run all collectors once at startup
     await run_revenue()
