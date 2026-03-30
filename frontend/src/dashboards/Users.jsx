@@ -28,18 +28,15 @@ const DEX_NAMES = {
 
 const DEXES = ["km", "xyz", "flx", "cash", "hyna", "vntl"];
 const PERIODS = ["1d", "7d", "30d", "90d"];
-const MIN_VOL_OPTIONS = [
-  { label: "$0",    value: 0 },
-  { label: "$100",  value: 100 },
-  { label: "$1K",   value: 1000 },
-  { label: "$10K",  value: 10000 },
-  { label: "$100K", value: 100000 },
-];
-const TRADFI_RATIO_OPTIONS = [
-  { label: "Any",  value: 0 },
-  { label: ">50%", value: 0.5 },
-  { label: ">80%", value: 0.8 },
-];
+// Log scale slider: 0-100 maps to $0-$10M
+const sliderToVol = (s) => {
+  if (s <= 0) return 0;
+  return Math.round(Math.pow(10, (s / 100) * 7)); // 10^0=1 to 10^7=10M
+};
+const volToSlider = (v) => {
+  if (v <= 0) return 0;
+  return Math.round((Math.log10(Math.max(v, 1)) / 7) * 100);
+};
 
 const TYPE_A_COLOR = "#a78bfa";
 const TYPE_B_COLOR = "#38bdf8";
@@ -200,72 +197,75 @@ function TabSelector({ options, value, onChange, accentColor = TYPE_A_COLOR }) {
 
 // ── Filter Panel ───────────────────────────────────────────────────────────────
 
+const sliderStyle = (color) => ({
+  width: "100%", height: 4, appearance: "none", background: P.subtle,
+  borderRadius: 2, outline: "none", cursor: "pointer",
+  accentColor: color,
+});
+
 function FilterPanel({ onApply, loading }) {
   const [filterPeriod, setFilterPeriod] = useState(30);
-  const [minVol, setMinVol] = useState(0);
-  const [tradfiRatio, setTradfiRatio] = useState(0);
+  const [volSlider, setVolSlider] = useState(0);       // 0-100 log scale
+  const [tradfiPct, setTradfiPct] = useState(0);       // 0-100 integer
   const [selectedVenues, setSelectedVenues] = useState(new Set(DEXES));
+
+  const minVol = sliderToVol(volSlider);
+  const tradfiRatio = tradfiPct / 100;
 
   const toggleVenue = (dex) => {
     setSelectedVenues((prev) => {
       const next = new Set(prev);
-      if (next.has(dex)) {
-        next.delete(dex);
-      } else {
-        next.add(dex);
-      }
+      next.has(dex) ? next.delete(dex) : next.add(dex);
       return next;
     });
   };
 
   const handleApply = () => {
-    onApply({
-      period: filterPeriod,
-      min_vol: minVol,
-      tradfi_ratio: tradfiRatio,
-      venues: [...selectedVenues],
-    });
+    onApply({ period: filterPeriod, min_vol: minVol, tradfi_ratio: tradfiRatio, venues: [...selectedVenues] });
   };
 
   const periodOpts = PERIODS.map((p) => ({ label: p, value: parseInt(p, 10) }));
 
   return (
-    <div style={{
-      background: P.card, border: `1px solid ${P.border}`,
-      borderRadius: 10, padding: 20, marginBottom: 16,
-    }}>
-      <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 16px", fontWeight: 600 }}>
-        User Filter
-      </h3>
+    <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20, marginBottom: 16 }}>
+      <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 16px", fontWeight: 600 }}>User Filter</h3>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 20, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 24, alignItems: "start" }}>
         {/* Period */}
         <div>
-          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
-            Period
-          </div>
-          <TabSelector
-            options={periodOpts}
-            value={filterPeriod}
-            onChange={setFilterPeriod}
-            accentColor={TYPE_A_COLOR}
-          />
+          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>Period</div>
+          <TabSelector options={periodOpts} value={filterPeriod} onChange={setFilterPeriod} accentColor={TYPE_A_COLOR} />
         </div>
 
-        {/* Min Volume */}
+        {/* Min Volume — log slider */}
         <div>
-          <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
-            Min Volume
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Min Volume</div>
+            <div style={{ color: "#ffb020", fontSize: 11, fontWeight: 700 }}>{minVol === 0 ? "Any" : fmtUSD(minVol)}</div>
           </div>
-          <TabSelector
-            options={MIN_VOL_OPTIONS}
-            value={minVol}
-            onChange={setMinVol}
-            accentColor="#ffb020"
-          />
+          <input type="range" min={0} max={100} step={1} value={volSlider}
+            onChange={(e) => setVolSlider(Number(e.target.value))}
+            style={sliderStyle("#ffb020")} />
+          <div style={{ display: "flex", justifyContent: "space-between", color: P.muted, fontSize: 9, marginTop: 4 }}>
+            <span>$0</span><span>$1K</span><span>$100K</span><span>$10M</span>
+          </div>
         </div>
 
-        {/* TradFi Ratio */}
+        {/* TradFi Ratio — linear slider */}
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>TradFi Ratio ≥</div>
+            <div style={{ color: TYPE_A_COLOR, fontSize: 11, fontWeight: 700 }}>{tradfiPct === 0 ? "Any" : `${tradfiPct}%`}</div>
+          </div>
+          <input type="range" min={0} max={100} step={5} value={tradfiPct}
+            onChange={(e) => setTradfiPct(Number(e.target.value))}
+            style={sliderStyle(TYPE_A_COLOR)} />
+          <div style={{ display: "flex", justifyContent: "space-between", color: P.muted, fontSize: 9, marginTop: 4 }}>
+            <span>Any</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+          </div>
+        </div>
+
+        {/* TradFi Ratio (old slot now used for venues) */}
         <div>
           <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 8, letterSpacing: "0.06em" }}>
             TradFi Ratio
