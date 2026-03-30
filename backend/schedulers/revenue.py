@@ -144,8 +144,7 @@ class RevenueCollector:
 
         total_builder = 0.0
         queried = set()
-        addrs_to_check = list(self.cfg["builders"]) + [self.cfg["fee_recipient"]]
-        for addr in addrs_to_check:
+        for addr in self.cfg["builders"]:
             if not addr or addr in queried:
                 continue
             queried.add(addr)

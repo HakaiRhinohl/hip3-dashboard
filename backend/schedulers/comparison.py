@@ -200,7 +200,7 @@ class ComparisonCollector:
             r["daily_vol"] = daily_vol
 
             # Effective rate
-            if total_vol > 0 and r["deployer_fees"] > 0:
+            if total_vol > 0 and r["total_fees"] > 0:
                 r["eff_deployer_bps"] = round((r["deployer_fees"] / total_vol) * 10000, 4)
                 r["eff_total_bps"] = round((r["total_fees"] / total_vol) * 10000, 4)
             else:
@@ -255,6 +255,7 @@ class ComparisonCollector:
                 "builder_fees": r.get("builder_fees", 0),
                 "total_fees": r.get("total_fees", 0),
                 "eff_deployer_bps": r.get("eff_deployer_bps", 0),
+                "eff_total_bps": r.get("eff_total_bps", 0),
                 "total_net_deposit": r.get("total_net_deposit", 0),
                 "avg_7d": v.get("avg_7d", 0),
                 "avg_30d": v.get("avg_30d", 0),

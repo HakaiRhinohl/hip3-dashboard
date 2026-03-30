@@ -67,7 +67,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
   // Extract this dex's data from comparison endpoint
   const dexData = useMemo(() => {
     if (!compData?.dex_summaries) return null;
-    return compData.dex_summaries.find((d) => d.dex === dexId);
+    return compData.dex_summaries.find((s) => s.dex === dexId);
   }, [compData, dexId]);
 
   // Build daily chart for this specific dex
@@ -98,21 +98,16 @@ export default function RevenueDashboard({ dexId = "km" }) {
       });
     }
     if (!dexData || !chartData.length) return [];
-    const effBps = dexData.eff_deployer_bps || 0;
-    const normalBps = effBps > 0 ? effBps / 0.10 : 0;
-    let cumG = 0, cumN = 0;
+    const bps = dexData.eff_total_bps || dexData.eff_deployer_bps || 0;
+    let cum = 0;
     return chartData.map((d) => {
-      const feeG = d.daily_volume_usd * effBps / 10000;
-      const feeN = d.daily_volume_usd * normalBps / 10000;
-      cumG += feeG;
-      cumN += feeN;
+      const fee = d.daily_volume_usd * bps / 10000;
+      cum += fee;
       return {
         ...d,
-        deployer_fee_growth: Math.round(feeG * 100) / 100,
-        deployer_fee_normal: Math.round(feeN * 100) / 100,
+        deployer_fee_growth: Math.round(fee * 100) / 100,
         builder_fee: 0,
-        cum_total_g: cumG,
-        cum_total_n: cumN,
+        cum_total_g: cum,
       };
     });
   }, [isKm, revData, dexData, chartData]);
@@ -126,8 +121,8 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const d = dexData;
   const fees = { deployer: d.deployer_fees || 0, builder: d.builder_fees || 0, total: d.total_fees || 0 };
-  const effBps = d.eff_deployer_bps || 0;
-  const normalBps = effBps > 0 ? effBps / 0.10 : 0;
+  const effBps = d.eff_total_bps || d.eff_deployer_bps || 0;
+  const normalBps = isKm && effBps > 0 ? effBps / 0.10 : 0;
   const avg7d = d.avg_7d || 0;
   const avg30d = d.avg_30d || 0;
 
@@ -191,8 +186,8 @@ export default function RevenueDashboard({ dexId = "km" }) {
         {tab === "revenue" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>Daily Revenue — Growth vs Normal Mode</h3>
-              <div style={{ fontSize: 10, color: C.muted }}>Bars = daily · Lines = cumulative</div>
+              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>Daily Revenue</h3>
+              <div style={{ fontSize: 10, color: C.muted }}>Bars = daily · Line = cumulative</div>
             </div>
             {feeChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={340}>
@@ -202,11 +197,9 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   <YAxis yAxisId="d" orientation="left" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <YAxis yAxisId="c" orientation="right" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
-                  <Bar yAxisId="d" dataKey="deployer_fee_growth" name="Deployer (Growth)" fill={accent} stackId="g" opacity={0.85} />
+                  <Bar yAxisId="d" dataKey="deployer_fee_growth" name="Deployer Fee" fill={accent} stackId="g" opacity={0.85} />
                   {isKm && <Bar yAxisId="d" dataKey="builder_fee" name="Builder Fee" fill={C.cyan} stackId="g" opacity={0.85} radius={[2, 2, 0, 0]} />}
-                  <Bar yAxisId="d" dataKey="deployer_fee_normal" name="Deployer (Normal)" fill={C.purple} opacity={0.2} radius={[2, 2, 0, 0]} />
-                  <Line yAxisId="c" type="monotone" dataKey="cum_total_g" name="Cum. (Growth)" stroke={accent} strokeWidth={2} dot={false} />
-                  <Line yAxisId="c" type="monotone" dataKey="cum_total_n" name="Cum. (Normal)" stroke={C.purple} strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                  <Line yAxisId="c" type="monotone" dataKey="cum_total_g" name="Cumulative" stroke={accent} strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
