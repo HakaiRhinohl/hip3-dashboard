@@ -42,6 +42,23 @@ DATA_END = date.today() - timedelta(days=2)
 
 TRADFI_ASSET_CLASSES = ["equity", "commodity", "currency", "index"]
 
+# Known crypto perp tickers that may appear in HIP-3 DEX fills.
+# Any coin NOT in this set is treated as a TradFi asset (stock, forex, commodity, index).
+KNOWN_CRYPTO_COINS = frozenset({
+    "BTC", "ETH", "SOL", "DOGE", "ADA", "AVAX", "LINK", "DOT", "MATIC", "UNI",
+    "ATOM", "LTC", "BCH", "FIL", "NEAR", "ICP", "SAND", "MANA", "APE", "CRV",
+    "SUSHI", "AAVE", "COMP", "MKR", "SNX", "YFI", "BAL", "ALGO", "XLM", "VET",
+    "THETA", "EOS", "TRX", "ZEC", "XMR", "DASH", "ETC", "FTM", "HBAR", "EGLD",
+    "FLOW", "GALA", "ENJ", "CHZ", "ROSE", "CELO", "KSM", "ZEN", "WAVES", "BAT",
+    "GRT", "LRC", "ANKR", "SHIB", "FLOKI", "PEPE", "BONK", "WIF", "POPCAT",
+    "OP", "ARB", "BLUR", "DYDX", "GMX", "RUNE", "INJ", "SEI", "TIA", "PYTH",
+    "JUP", "STRK", "SUI", "APT", "IMX", "RNDR", "ORDI", "1000SATS", "BOME",
+    "DEGEN", "WLD", "PENDLE", "AEVO", "ENA", "ETHFI", "REZ", "BB", "NOT",
+    "ZK", "BLAST", "ZRO", "LISTA", "DOGS", "HAMSTER", "CATI", "HMSTR",
+    "LUMIA", "EIGEN", "SCRT", "SAFE", "TON", "1000BONK", "1000PEPE",
+    "1000SHIB", "1000FLOKI", "BNB", "XRP", "BCH",
+})
+
 S3_BUCKET   = "hydromancer-reservoir"
 S3_REGION   = "ap-northeast-1"
 S3_BASE     = f"s3://{S3_BUCKET}/by_dex"
@@ -143,17 +160,22 @@ def _download_parquet(dex: str, date_str: str, local_path: str) -> bool:
 def _process_parquet(local_path: str, dex: str, date_str: str) -> list[dict]:
     """
     Use DuckDB to aggregate fills from a local parquet file.
-    Groups by (address, asset_class) to compute tradfi vs crypto volume.
+    Classification priority:
+      1. asset_class column (equity/commodity/currency/index → TradFi)
+      2. coin column + KNOWN_CRYPTO_COINS set (coin not in set → TradFi)
+      3. Fallback: all volume is undifferentiated (tradfi_vol = 0)
     Returns list of {address, first_ts, last_ts, volume, trades, tradfi_vol, crypto_vol}.
     """
     try:
         import duckdb  # type: ignore
         conn = duckdb.connect()
 
-        # Check if asset_class column exists
+        # Inspect schema
         cols = conn.execute(f"DESCRIBE SELECT * FROM read_parquet('{local_path}') LIMIT 0").fetchall()
         col_names = [c[0].lower() for c in cols]
         has_asset_class = "asset_class" in col_names
+        has_coin        = "coin" in col_names
+        logger.debug(f"Parquet schema {dex}/{date_str}: {col_names}")
 
         if has_asset_class:
             rows = conn.execute(f"""
@@ -177,7 +199,35 @@ def _process_parquet(local_path: str, dex: str, date_str: str) -> list[dict]:
                 FROM base
                 GROUP BY address
             """).fetchall()
+
+        elif has_coin:
+            # Build SQL IN list from known crypto coins
+            crypto_list = ",".join(f"'{c}'" for c in sorted(KNOWN_CRYPTO_COINS))
+            rows = conn.execute(f"""
+                WITH base AS (
+                    SELECT
+                        address,
+                        UPPER(COALESCE(CAST(coin AS VARCHAR), '')) AS coin,
+                        CAST(price AS DOUBLE) * CAST(size AS DOUBLE) AS notional,
+                        CAST(timestamp AS VARCHAR)::TEXT AS ts
+                    FROM read_parquet('{local_path}')
+                    WHERE address IS NOT NULL AND address != ''
+                )
+                SELECT
+                    address,
+                    MIN(ts) AS first_ts,
+                    MAX(ts) AS last_ts,
+                    SUM(notional) AS volume,
+                    COUNT(*) AS trades,
+                    SUM(CASE WHEN coin NOT IN ({crypto_list}) AND coin != '' THEN notional ELSE 0 END) AS tradfi_vol,
+                    SUM(CASE WHEN coin IN ({crypto_list}) THEN notional ELSE 0 END) AS crypto_vol
+                FROM base
+                GROUP BY address
+            """).fetchall()
+            logger.info(f"  {dex}/{date_str}: used coin-based TradFi classification")
+
         else:
+            logger.warning(f"  {dex}/{date_str}: no asset_class or coin column — TradFi vol will be 0")
             rows = conn.execute(f"""
                 SELECT
                     address,
@@ -267,6 +317,54 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict], dex: str, date_str:
             total_trd, primary, json.dumps(dex_vols), first_dex,
             total_tradfi, total_crypto,
         ))
+
+
+# ── DEX-based TradFi migration ─────────────────────────────────────────────────
+
+# DEXes whose assets are predominantly TradFi (equities, commodities, forex).
+# xyz (Trade.xyz) is excluded because it lists both TradFi and crypto perps.
+TRADFI_DEXES = frozenset({"km", "flx", "cash", "hyna", "vntl"})
+
+
+def _migrate_dex_tradfi(conn: sqlite3.Connection) -> int:
+    """
+    One-time migration: populate tradfi_vol_usd / crypto_vol_usd from dex_volumes
+    for users where the data is missing (tradfi_vol_usd = 0 and hip3_volume_usd > 0).
+
+    Uses a DEX-level proxy:
+      tradfi_vol_usd  = sum of volume on km, flx, cash, hyna, vntl
+      crypto_vol_usd  = volume on xyz (mixed TradFi/crypto DEX)
+
+    This is an approximation used only when per-asset-class data is unavailable.
+    """
+    try:
+        # SQLite json_extract available since 3.38 (2022-02-22); check first
+        conn.execute("SELECT json_extract('{}', '$.x')")
+    except Exception:
+        logger.warning("SQLite json_extract not available — DEX-based TradFi migration skipped")
+        return 0
+
+    cursor = conn.execute("""
+        UPDATE user_stats
+        SET
+            tradfi_vol_usd = (
+                COALESCE(json_extract(dex_volumes, '$.km'),   0) +
+                COALESCE(json_extract(dex_volumes, '$.flx'),  0) +
+                COALESCE(json_extract(dex_volumes, '$.cash'), 0) +
+                COALESCE(json_extract(dex_volumes, '$.hyna'), 0) +
+                COALESCE(json_extract(dex_volumes, '$.vntl'), 0)
+            ),
+            crypto_vol_usd = COALESCE(json_extract(dex_volumes, '$.xyz'), 0)
+        WHERE tradfi_vol_usd = 0
+          AND hip3_volume_usd > 0
+          AND dex_volumes IS NOT NULL
+          AND dex_volumes != '{}'
+    """)
+    conn.commit()
+    updated = cursor.rowcount
+    if updated > 0:
+        logger.info(f"DEX-based TradFi migration: updated {updated:,} users")
+    return updated
 
 
 # ── Daily new users computation ────────────────────────────────────────────────
@@ -655,14 +753,27 @@ class UsersCollector:
             conn = _open_db()
             processed = conn.execute("SELECT COUNT(*) FROM bootstrap_progress").fetchone()[0]
             total = _total_dates()
-            conn.close()
+
             if processed < total:
                 logger.info(f"Bootstrap incomplete ({processed}/{total}), starting background thread")
+                conn.close()
                 t = threading.Thread(target=self._run_bootstrap_bg, daemon=True, name="users-bootstrap")
                 t.start()
                 self._bootstrap_thread = t
             else:
                 logger.info("Bootstrap already complete")
+                # Check if TradFi migration is needed (all users have tradfi_vol_usd = 0)
+                needs_migration = conn.execute(
+                    "SELECT COUNT(*) FROM user_stats "
+                    "WHERE tradfi_vol_usd = 0 AND hip3_volume_usd > 0"
+                ).fetchone()[0]
+                if needs_migration > 0:
+                    logger.info(
+                        f"Running DEX-based TradFi migration for {needs_migration:,} users "
+                        "(parquet files lack asset_class column)..."
+                    )
+                    _migrate_dex_tradfi(conn)
+                conn.close()
         except Exception as e:
             logger.error(f"maybe_start_bootstrap error: {e}", exc_info=True)
 

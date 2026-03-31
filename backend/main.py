@@ -235,3 +235,20 @@ async def users_type_breakdown():
     Returns: {type_a, type_b, type_a_pct, type_b_pct, avg_tradfi_ratio}
     """
     return users_collector.get_type_breakdown()
+
+
+@app.post("/api/admin/migrate_tradfi")
+async def admin_migrate_tradfi():
+    """
+    Trigger the DEX-based TradFi migration manually.
+    Updates tradfi_vol_usd / crypto_vol_usd for users where it's missing.
+    """
+    import sqlite3 as _sqlite3
+    from schedulers.users import DB_PATH, _open_db, _migrate_dex_tradfi
+    try:
+        conn = _open_db()
+        updated = _migrate_dex_tradfi(conn)
+        conn.close()
+        return {"status": "ok", "updated": updated}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

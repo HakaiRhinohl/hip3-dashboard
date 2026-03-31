@@ -320,7 +320,7 @@ function FilterPanel({ onApply, loading }) {
           {loading ? "Filtering..." : "Apply Filter"}
         </button>
         <div style={{ color: P.muted, fontSize: 9, fontStyle: "italic" }}>
-          Proxy based on asset class distribution within HIP-3 trades. Type A = &gt;80% equity/commodity/forex
+          DEX-based proxy: Type A = &gt;80% volume on TradFi DEXes (Markets, Felix, Dreamcash, Hyna, Vantil)
         </div>
       </div>
     </div>
@@ -616,7 +616,7 @@ export default function UsersDashboard() {
         <StatCard
           title="Type A (TradFi Proxy)"
           value={fmtN(tb.type_a)}
-          subtitle={`${tb.type_a_pct || 0}% of all users · >80% non-crypto assets`}
+          subtitle={`${tb.type_a_pct || 0}% of all users · >80% vol on TradFi DEXes`}
           accentColor={TYPE_A_COLOR}
         />
         <StatCard
