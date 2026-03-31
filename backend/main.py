@@ -218,13 +218,16 @@ async def users_filter(
     min_vol: float = Query(default=0.0, ge=0),
     tradfi_ratio: float = Query(default=0.0, ge=0.0, le=1.0),
     venues: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
 ):
     """
     Filter HIP-3 users by period, minimum volume, TradFi ratio, and venues.
-    Returns: {total_matching, type_a_count, type_b_count, by_dex, avg_volume, sample_users}
+    Supports pagination via page / page_size query params.
+    Returns: {total_matching, type_a_count, type_b_count, by_dex, avg_volume, users, page, page_size, total_pages}
     """
     venue_list = [v.strip() for v in venues.split(",") if v.strip()] if venues else []
-    return users_collector.get_filter(period, min_vol, tradfi_ratio, venue_list)
+    return users_collector.get_filter(period, min_vol, tradfi_ratio, venue_list, page=page, page_size=page_size)
 
 
 @app.get("/api/users/type_breakdown")

@@ -28,9 +28,15 @@ DB_PATH = os.environ.get("FEE_DB_PATH", "/data/fees.db")
 
 # Known historical deployer fee baselines — total earned BEFORE first withdrawal.
 # Used to seed the watermark DB on first run so historical earnings are not lost.
+# Only DEXes with a confirmed baseline use the watermark pattern. All others
+# use the CURRENT clearinghouseState.accountValue directly (no accumulation).
 DEPLOYER_BASELINES: dict[str, float] = {
     "km": 92700.0,  # accountValue before withdrawal on 2026-03-30
 }
+
+# DEXes that use the watermark accumulation pattern.
+# All others: just return the current balance directly.
+WATERMARK_DEXES: frozenset[str] = frozenset({"km"})
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -57,11 +63,15 @@ def init_fee_db():
 
 def update_deployer_cumulative(dex: str, current_balance: float) -> float:
     """
-    Watermark pattern for deployer fees (clearinghouseState.accountValue).
-    Accumulates earnings across claim/withdrawal events.
+    For DEXes in WATERMARK_DEXES: watermark pattern that accumulates earnings
+    across withdrawal events (prevents balance resets from hiding historical fees).
+    For all other DEXes: returns the current balance directly (no accumulation).
 
-    Returns the total cumulative deployer fees ever earned for this DEX.
+    Returns the total deployer fees to display for this DEX.
     """
+    if dex not in WATERMARK_DEXES:
+        # No known historical baseline — current balance IS the best estimate.
+        return current_balance
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     conn = _get_conn()
     try:

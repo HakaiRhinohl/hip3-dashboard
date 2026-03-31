@@ -327,46 +327,101 @@ function FilterPanel({ onApply, loading }) {
   );
 }
 
+// ── Wallet link ────────────────────────────────────────────────────────────────
+
+function WalletLink({ address }) {
+  if (!address) return <span style={{ color: P.muted }}>—</span>;
+  const short = `${address.slice(0, 8)}...${address.slice(-6)}`;
+  return (
+    <a
+      href={`https://hypurrscan.io/address/${address}#txs`}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 9,
+        color: "#38bdf8",
+        textDecoration: "none",
+        borderBottom: "1px solid #38bdf840",
+        transition: "color 0.15s",
+      }}
+      onMouseEnter={(e) => { e.target.style.color = "#7dd3fc"; }}
+      onMouseLeave={(e) => { e.target.style.color = "#38bdf8"; }}
+      title={address}
+    >
+      {short}
+    </a>
+  );
+}
+
 // ── Filter Results ─────────────────────────────────────────────────────────────
 
-function FilterResults({ result, filterParams, timelineData, timelineLoading, xInterval }) {
+function FilterResults({ result, filterParams, timelineData, timelineLoading, xInterval, page, onPageChange }) {
   if (!result) return null;
+
+  const byDex = result.by_dex || {};
+  const totalVol = result.total_volume || 0;
+  const users = result.users || result.sample_users || [];
+  const totalPages = result.total_pages || 1;
 
   return (
     <div style={{ marginBottom: 16 }}>
       {/* Result stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
-        <StatCard
-          title="Matching Users"
-          value={fmtN(result.total_matching)}
-          subtitle={`Period: last ${filterParams?.period || 30}d`}
-          accentColor={TYPE_A_COLOR}
-        />
-        <StatCard
-          title="Type A Matching"
-          value={fmtN(result.type_a_count)}
-          subtitle=">80% TradFi volume"
-          accentColor={TYPE_A_COLOR}
-        />
-        <StatCard
-          title="Type B Matching"
-          value={fmtN(result.type_b_count)}
-          subtitle="Crypto-native / mixed"
-          accentColor={TYPE_B_COLOR}
-        />
-        <StatCard
-          title="Avg Volume"
-          value={fmtUSD(result.avg_volume)}
-          subtitle="Per matching user"
-          accentColor={NEW_COLOR}
-        />
+        <StatCard title="Matching Users" value={fmtN(result.total_matching)}
+          subtitle={`Period: last ${filterParams?.period || 30}d`} accentColor={TYPE_A_COLOR} />
+        <StatCard title="Type A Matching" value={fmtN(result.type_a_count)}
+          subtitle=">80% TradFi DEX volume" accentColor={TYPE_A_COLOR} />
+        <StatCard title="Type B Matching" value={fmtN(result.type_b_count)}
+          subtitle="Crypto-native / mixed" accentColor={TYPE_B_COLOR} />
+        <StatCard title="Avg Volume" value={fmtUSD(result.avg_volume)}
+          subtitle="Per matching user" accentColor={NEW_COLOR} />
       </div>
 
-      {/* New users per day chart for filtered period */}
-      <div style={{
-        background: P.card, border: `1px solid ${P.border}`,
-        borderRadius: 10, padding: 20, marginBottom: 12,
-      }}>
+      {/* Venue breakdown for matching users */}
+      <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20, marginBottom: 12 }}>
+        <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 12px", fontWeight: 600 }}>
+          Venue Breakdown — Matching Users
+        </h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 12 }}>
+          {DEXES.map((dex) => {
+            const d = typeof byDex[dex] === "object" ? byDex[dex] : { users: byDex[dex] || 0, volume: 0 };
+            const pct = result.total_matching > 0 ? ((d.users / result.total_matching) * 100).toFixed(1) : "0.0";
+            return (
+              <div key={dex} style={{
+                background: P.subtle, borderRadius: 6, padding: "10px 12px",
+                borderLeft: `3px solid ${DEX_COLORS[dex]}`,
+              }}>
+                <div style={{ color: DEX_COLORS[dex], fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
+                  {DEX_NAMES[dex]}
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: P.text }}>{fmtN(d.users)}</div>
+                <div style={{ color: P.muted, fontSize: 9, marginTop: 2 }}>{pct}% · {fmtUSD(d.volume)}</div>
+              </div>
+            );
+          })}
+        </div>
+        {/* Bar chart per venue */}
+        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 32 }}>
+          {DEXES.map((dex) => {
+            const d = typeof byDex[dex] === "object" ? byDex[dex] : { users: byDex[dex] || 0 };
+            const pct = result.total_matching > 0 ? (d.users / result.total_matching) : 0;
+            return (
+              <div key={dex} title={`${DEX_NAMES[dex]}: ${fmtN(d.users)}`} style={{
+                flex: pct > 0 ? pct : 0.002,
+                height: Math.max(4, pct * 32),
+                background: DEX_COLORS[dex],
+                borderRadius: 2,
+                opacity: 0.85,
+                minWidth: pct > 0 ? 2 : 0,
+              }} />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* New users per day chart */}
+      <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20, marginBottom: 12 }}>
         <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
           New Users per Day (filtered period)
         </h3>
@@ -381,95 +436,66 @@ function FilterResults({ result, filterParams, timelineData, timelineLoading, xI
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={timelineData} barCategoryGap="20%">
               <CartesianGrid strokeDasharray="3 3" stroke={P.subtle} opacity={0.3} vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: P.muted, fontSize: 9 }}
-                tickLine={false}
-                interval={xInterval}
-              />
-              <YAxis
-                tick={{ fill: P.muted, fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-                allowDecimals={false}
-              />
+              <XAxis dataKey="date" tick={{ fill: P.muted, fontSize: 9 }} tickLine={false} interval={xInterval} />
+              <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickLine={false} axisLine={false} allowDecimals={false} />
               <Tooltip content={<BarTip />} />
-              <Legend
-                wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
-                formatter={(value) => DEX_NAMES[value] || value}
-              />
+              <Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} formatter={(v) => DEX_NAMES[v] || v} />
               {DEXES.map((dex, i) => (
-                <Bar
-                  key={dex}
-                  dataKey={dex}
-                  name={dex}
-                  fill={DEX_COLORS[dex]}
-                  stackId="s"
-                  opacity={0.85}
-                  barSize={8}
-                  radius={i === DEXES.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]}
-                />
+                <Bar key={dex} dataKey={dex} name={dex} fill={DEX_COLORS[dex]}
+                  stackId="s" opacity={0.85} barSize={8}
+                  radius={i === DEXES.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]} />
               ))}
             </BarChart>
           </ResponsiveContainer>
         )}
       </div>
 
-      {/* Sample users table */}
-      {result.sample_users && result.sample_users.length > 0 && (
-        <div style={{
-          background: P.card, border: `1px solid ${P.border}`,
-          borderRadius: 10, padding: 20,
-        }}>
-          <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
-            Top Matching Users
-          </h3>
-          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
-            Top 20 by volume within filter
+      {/* Users table with pagination */}
+      {users.length > 0 && (
+        <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+            <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: 0, fontWeight: 600 }}>
+              Matching Users
+            </h3>
+            <span style={{ color: P.muted, fontSize: 9 }}>
+              {fmtN(result.total_matching)} total · page {result.page || 1} of {totalPages}
+            </span>
+          </div>
+          <p style={{ color: P.muted, fontSize: 10, margin: "0 0 12px" }}>
+            Sorted by volume · click address to view on Hypurrscan
           </p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${P.border}` }}>
+                <th style={{ padding: "6px 8px", textAlign: "left", color: P.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>#</th>
                 {["Address", "Volume", "TradFi Ratio", "First Date", "First DEX"].map((h, i) => (
-                  <th key={i} style={{
-                    padding: "6px 8px",
-                    textAlign: i === 0 ? "left" : "right",
-                    color: P.muted, fontWeight: 600, fontSize: 9,
-                    textTransform: "uppercase",
-                  }}>
-                    {h}
-                  </th>
+                  <th key={i} style={{ padding: "6px 8px", textAlign: i === 0 ? "left" : "right", color: P.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {result.sample_users.map((u, idx) => {
+              {users.map((u, idx) => {
                 const ratio = u.tradfi_ratio || 0;
                 const isTypeA = ratio > 0.8;
                 const ratioColor = isTypeA ? TYPE_A_COLOR : TYPE_B_COLOR;
+                const rank = ((result.page || 1) - 1) * (result.page_size || 50) + idx + 1;
                 return (
                   <tr key={idx} style={{ borderBottom: `1px solid ${P.subtle}` }}>
-                    <td style={{ padding: "7px 8px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: P.muted }}>
-                      {u.address ? `${u.address.slice(0, 8)}...${u.address.slice(-6)}` : "—"}
+                    <td style={{ padding: "7px 8px", color: P.muted, fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+                      {rank}
+                    </td>
+                    <td style={{ padding: "7px 8px" }}>
+                      <WalletLink address={u.address} />
                     </td>
                     <td style={{ padding: "7px 8px", textAlign: "right", fontWeight: 700 }}>
                       {fmtUSD(u.volume)}
                     </td>
                     <td style={{ padding: "7px 8px", textAlign: "right" }}>
-                      <span style={{
-                        color: ratioColor,
-                        background: `${ratioColor}18`,
-                        borderRadius: 3,
-                        padding: "2px 6px",
-                        fontWeight: 700,
-                        fontSize: 9,
-                      }}>
+                      <span style={{ color: ratioColor, background: `${ratioColor}18`, borderRadius: 3, padding: "2px 6px", fontWeight: 700, fontSize: 9 }}>
                         {(ratio * 100).toFixed(0)}%
                       </span>
                     </td>
-                    <td style={{ padding: "7px 8px", textAlign: "right", color: P.muted }}>
-                      {u.first_date || "—"}
-                    </td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", color: P.muted }}>{u.first_date || "—"}</td>
                     <td style={{ padding: "7px 8px", textAlign: "right" }}>
                       <span style={{ color: DEX_COLORS[u.first_dex] || P.muted, fontWeight: 700 }}>
                         {DEX_NAMES[u.first_dex] || u.first_dex || "—"}
@@ -480,6 +506,44 @@ function FilterResults({ result, filterParams, timelineData, timelineLoading, xI
               })}
             </tbody>
           </table>
+
+          {/* Pagination controls */}
+          {totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, marginTop: 16 }}>
+              <button
+                onClick={() => onPageChange(1)}
+                disabled={page <= 1}
+                style={{ background: "transparent", color: page <= 1 ? P.muted : TYPE_A_COLOR, border: `1px solid ${page <= 1 ? P.border : TYPE_A_COLOR}`, borderRadius: 4, padding: "4px 10px", fontSize: 10, cursor: page <= 1 ? "not-allowed" : "pointer", fontFamily: "inherit" }}
+              >«</button>
+              <button
+                onClick={() => onPageChange(page - 1)}
+                disabled={page <= 1}
+                style={{ background: "transparent", color: page <= 1 ? P.muted : TYPE_A_COLOR, border: `1px solid ${page <= 1 ? P.border : TYPE_A_COLOR}`, borderRadius: 4, padding: "4px 10px", fontSize: 10, cursor: page <= 1 ? "not-allowed" : "pointer", fontFamily: "inherit" }}
+              >‹ Prev</button>
+              {/* Page number buttons — show up to 7 around current */}
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                const start = Math.max(1, Math.min(page - 3, totalPages - 6));
+                const p = start + i;
+                if (p > totalPages) return null;
+                return (
+                  <button key={p} onClick={() => onPageChange(p)}
+                    style={{ background: p === page ? TYPE_A_COLOR : "transparent", color: p === page ? "#0a0020" : P.muted, border: `1px solid ${p === page ? TYPE_A_COLOR : P.border}`, borderRadius: 4, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: p === page ? 700 : 400 }}>
+                    {p}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => onPageChange(page + 1)}
+                disabled={page >= totalPages}
+                style={{ background: "transparent", color: page >= totalPages ? P.muted : TYPE_A_COLOR, border: `1px solid ${page >= totalPages ? P.border : TYPE_A_COLOR}`, borderRadius: 4, padding: "4px 10px", fontSize: 10, cursor: page >= totalPages ? "not-allowed" : "pointer", fontFamily: "inherit" }}
+              >Next ›</button>
+              <button
+                onClick={() => onPageChange(totalPages)}
+                disabled={page >= totalPages}
+                style={{ background: "transparent", color: page >= totalPages ? P.muted : TYPE_A_COLOR, border: `1px solid ${page >= totalPages ? P.border : TYPE_A_COLOR}`, borderRadius: 4, padding: "4px 10px", fontSize: 10, cursor: page >= totalPages ? "not-allowed" : "pointer", fontFamily: "inherit" }}
+              >»</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -508,29 +572,41 @@ export default function UsersDashboard() {
   const [filterResult, setFilterResult] = useState(null);
   const [filterParams, setFilterParams] = useState(null);
   const [filterLoading, setFilterLoading] = useState(false);
+  const [filterPage, setFilterPage] = useState(1);
 
   // Timeline for filtered period
   const [filterPeriodDays, setFilterPeriodDays] = useState(30);
   const { data: filterTimelineRaw, loading: filterTimelineLoading } =
     useApiData(filterParams ? `/api/users/timeline?period=${filterParams.period}` : null);
 
-  const handleApplyFilter = useCallback(async ({ period: p, min_vol, tradfi_ratio, venues }) => {
-    setFilterPeriodDays(p);
+  const fetchFilter = useCallback(async (p, min_vol, tradfi_ratio, venues, page = 1) => {
     setFilterLoading(true);
     try {
       const venueStr = venues.join(",");
-      const url = `/api/users/filter?period=${p}&min_vol=${min_vol}&tradfi_ratio=${tradfi_ratio}&venues=${encodeURIComponent(venueStr)}`;
+      const url = `/api/users/filter?period=${p}&min_vol=${min_vol}&tradfi_ratio=${tradfi_ratio}&venues=${encodeURIComponent(venueStr)}&page=${page}&page_size=50`;
       const apiBase = import.meta.env.VITE_API_URL || "";
       const res = await fetch(`${apiBase}${url}`);
       const data = await res.json();
       setFilterResult(data);
-      setFilterParams({ period: p, min_vol, tradfi_ratio, venues });
     } catch (err) {
       console.error("Filter API error:", err);
     } finally {
       setFilterLoading(false);
     }
   }, []);
+
+  const handleApplyFilter = useCallback(async ({ period: p, min_vol, tradfi_ratio, venues }) => {
+    setFilterPeriodDays(p);
+    setFilterPage(1);
+    setFilterParams({ period: p, min_vol, tradfi_ratio, venues });
+    await fetchFilter(p, min_vol, tradfi_ratio, venues, 1);
+  }, [fetchFilter]);
+
+  const handleFilterPageChange = useCallback((newPage) => {
+    if (!filterParams) return;
+    setFilterPage(newPage);
+    fetchFilter(filterParams.period, filterParams.min_vol, filterParams.tradfi_ratio, filterParams.venues, newPage);
+  }, [filterParams, fetchFilter]);
 
   // Main stacked bar chart data
   const timelineData = useMemo(() => {
@@ -643,6 +719,8 @@ export default function UsersDashboard() {
         timelineData={filterTimelineData}
         timelineLoading={filterTimelineLoading}
         xInterval={filterXInterval}
+        page={filterPage}
+        onPageChange={handleFilterPageChange}
       />
 
       {/* Period selector for main bar chart */}

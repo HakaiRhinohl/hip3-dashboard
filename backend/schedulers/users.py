@@ -609,14 +609,17 @@ def _query_filter(
     min_vol: float,
     tradfi_ratio_min: float,
     venues: list[str],
+    page: int = 1,
+    page_size: int = 50,
 ) -> dict:
     """
-    Filter users by various criteria and return aggregate stats.
+    Filter users by various criteria and return paginated results + aggregate stats.
 
     period_days:      only users whose first_hip3_date is within last N days
     min_vol:          minimum hip3_volume_usd
     tradfi_ratio_min: minimum tradfi_vol_usd / hip3_volume_usd ratio (0.0-1.0)
     venues:           filter by first_seen_dex (empty = all)
+    page / page_size: pagination (1-indexed)
     """
     today = date.today()
     cutoff = (today - timedelta(days=period_days)).isoformat()
@@ -646,59 +649,70 @@ def _query_filter(
     total_matching = total_row[0] if total_row else 0
 
     # Type A: tradfi ratio > 0.8
-    type_a_params = list(params)
     type_a_where = where_sql + " AND hip3_volume_usd > 0 AND COALESCE(tradfi_vol_usd, 0) / hip3_volume_usd > 0.8"
     type_a_row = conn.execute(
-        f"SELECT COUNT(*) FROM user_stats WHERE {type_a_where}", type_a_params
+        f"SELECT COUNT(*) FROM user_stats WHERE {type_a_where}", list(params)
     ).fetchone()
     type_a_count = type_a_row[0] if type_a_row else 0
-
-    # Type B: the rest
     type_b_count = total_matching - type_a_count
 
-    # By-dex breakdown
-    by_dex: dict[str, int] = {}
+    # By-dex breakdown (users + volume per DEX)
+    by_dex: dict[str, dict] = {}
     for dex in DEXES:
         dex_params = list(params) + [dex]
-        dex_row = conn.execute(
-            f"SELECT COUNT(*) FROM user_stats WHERE {where_sql} AND first_seen_dex = ?",
+        row = conn.execute(
+            f"SELECT COUNT(*) AS cnt, COALESCE(SUM(hip3_volume_usd), 0) AS vol "
+            f"FROM user_stats WHERE {where_sql} AND first_seen_dex = ?",
             dex_params,
         ).fetchone()
-        by_dex[dex] = dex_row[0] if dex_row else 0
+        by_dex[dex] = {
+            "users":  row["cnt"] if row else 0,
+            "volume": round(float(row["vol"] or 0), 2) if row else 0.0,
+        }
 
-    # Average volume
-    avg_row = conn.execute(
-        f"SELECT AVG(hip3_volume_usd) FROM user_stats WHERE {where_sql}", params
+    # Aggregate stats
+    agg_row = conn.execute(
+        f"SELECT AVG(hip3_volume_usd), SUM(hip3_volume_usd) FROM user_stats WHERE {where_sql}",
+        params,
     ).fetchone()
-    avg_volume = float(avg_row[0] or 0) if avg_row else 0.0
+    avg_volume   = round(float(agg_row[0] or 0), 2) if agg_row else 0.0
+    total_volume = round(float(agg_row[1] or 0), 2) if agg_row else 0.0
 
-    # Sample users: top 20 by volume
-    sample_rows = conn.execute(
+    # Paginated users sorted by volume
+    offset = (page - 1) * page_size
+    user_rows = conn.execute(
         f"SELECT address, hip3_volume_usd, first_hip3_date, first_seen_dex, "
         f"COALESCE(tradfi_vol_usd, 0) AS tradfi_vol_usd "
-        f"FROM user_stats WHERE {where_sql} ORDER BY hip3_volume_usd DESC LIMIT 20",
-        params,
+        f"FROM user_stats WHERE {where_sql} ORDER BY hip3_volume_usd DESC "
+        f"LIMIT ? OFFSET ?",
+        params + [page_size, offset],
     ).fetchall()
-    sample_users = [
+    users = [
         {
-            "address":       r["address"],
-            "volume":        round(float(r["hip3_volume_usd"] or 0), 2),
-            "first_date":    r["first_hip3_date"],
-            "first_dex":     r["first_seen_dex"],
-            "tradfi_ratio":  round(
+            "address":      r["address"],
+            "volume":       round(float(r["hip3_volume_usd"] or 0), 2),
+            "first_date":   r["first_hip3_date"],
+            "first_dex":    r["first_seen_dex"],
+            "tradfi_ratio": round(
                 float(r["tradfi_vol_usd"] or 0) / float(r["hip3_volume_usd"] or 1), 4
             ) if (r["hip3_volume_usd"] or 0) > 0 else 0.0,
         }
-        for r in sample_rows
+        for r in user_rows
     ]
+
+    total_pages = max(1, (total_matching + page_size - 1) // page_size)
 
     return {
         "total_matching": total_matching,
         "type_a_count":   type_a_count,
         "type_b_count":   type_b_count,
         "by_dex":         by_dex,
-        "avg_volume":     round(avg_volume, 2),
-        "sample_users":   sample_users,
+        "avg_volume":     avg_volume,
+        "total_volume":   total_volume,
+        "users":          users,
+        "page":           page,
+        "page_size":      page_size,
+        "total_pages":    total_pages,
     }
 
 
@@ -834,10 +848,12 @@ class UsersCollector:
         min_vol: float = 0.0,
         tradfi_ratio_min: float = 0.0,
         venues: list[str] | None = None,
+        page: int = 1,
+        page_size: int = 50,
     ) -> dict:
         try:
             conn = _open_db()
-            data = _query_filter(conn, period_days, min_vol, tradfi_ratio_min, venues or [])
+            data = _query_filter(conn, period_days, min_vol, tradfi_ratio_min, venues or [], page=page, page_size=page_size)
             conn.close()
             return data
         except Exception as e:
@@ -848,7 +864,11 @@ class UsersCollector:
                 "type_b_count": 0,
                 "by_dex": {},
                 "avg_volume": 0.0,
-                "sample_users": [],
+                "total_volume": 0.0,
+                "users": [],
+                "page": 1,
+                "page_size": page_size,
+                "total_pages": 1,
             }
 
     def get_type_breakdown(self) -> dict:
