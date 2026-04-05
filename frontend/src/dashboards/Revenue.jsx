@@ -130,15 +130,18 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const d = dexData;
   const fees = { deployer: d.deployer_fees || 0, builder: d.builder_fees || 0, total: d.total_fees || 0 };
-  // Use backend-calculated effective bps (derived from real fee baseline, not estimates)
-  const effBps = d.eff_deployer_bps || d.eff_total_bps || 0;
+  // km: use deployer bps (growth vs normal distinction applies)
+  // others: use total bps (deployer + builder combined, no growth/normal split)
+  const effBps = isKm
+    ? (d.eff_deployer_bps || d.eff_total_bps || 0)
+    : (d.eff_total_bps || d.eff_deployer_bps || 0);
   const normalBps = isKm ? KM_NORMAL_BPS : 0;
   const avg7d = d.avg_7d || 0;
   const avg30d = d.avg_30d || 0;
 
   // Projections
   const annGrowth = avg30d * 365 * effBps / 10000;
-  const annNormal = avg30d * 365 * normalBps / 10000;
+  const annNormal = isKm ? avg30d * 365 * normalBps / 10000 : 0;
 
   const pieData = [
     { name: "Deployer Fees", value: fees.deployer, color: C.amber },
@@ -176,9 +179,13 @@ export default function RevenueDashboard({ dexId = "km" }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 20 }}>
         <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day (7d avg)`} accent={C.cyan} />
         <StatCard label="Total Fees" value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
-        <StatCard label="Effective Rate" value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={normalBps > 0 ? `${normalBps.toFixed(2)} bps normal mode` : "No data"} accent={accent} />
-        <StatCard label="Ann. Revenue (Growth)" value={annGrowth > 0 ? fmt(annGrowth) : "—"} sub={annGrowth > 0 ? `${fmt(annGrowth / 12)}/mo` : ""} accent={accent} />
-        <StatCard label="Ann. Revenue (Normal)" value={annNormal > 0 ? fmt(annNormal) : "—"} sub={annNormal > 0 ? `${fmt(annNormal / 12)}/mo` : ""} accent={C.purple} />
+        <StatCard label={isKm ? "Effective Rate (Growth)" : "Effective Rate"} value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={normalBps > 0 ? `${normalBps.toFixed(2)} bps normal mode` : isKm ? "No data" : "Deployer + builder"} accent={accent} />
+        <StatCard label={isKm ? "Ann. Revenue (Growth)" : "Ann. Revenue"} value={annGrowth > 0 ? fmt(annGrowth) : "—"} sub={annGrowth > 0 ? `${fmt(annGrowth / 12)}/mo` : ""} accent={accent} />
+        {isKm ? (
+          <StatCard label="Ann. Revenue (Normal)" value={annNormal > 0 ? fmt(annNormal) : "—"} sub={annNormal > 0 ? `${fmt(annNormal / 12)}/mo` : ""} accent={C.purple} />
+        ) : (
+          <StatCard label="Net Deposit" value={fmt(d.total_net_deposit)} sub="Total deposited in DEX" accent={C.purple} />
+        )}
       </div>
 
       {/* Tabs */}
