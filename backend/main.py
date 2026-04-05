@@ -89,8 +89,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_comparison, "interval", minutes=5, id="comparison")
     # Liquidity snapshots every 30 seconds
     scheduler.add_job(run_liquidity_snapshot, "interval", seconds=30, id="liquidity")
-    # Users incremental update every 24 hours
-    scheduler.add_job(run_users, "interval", hours=24, id="users")
+    # Users incremental update every 6 hours
+    scheduler.add_job(run_users, "interval", hours=6, id="users")
 
     scheduler.start()
     logger.info("Scheduler started")

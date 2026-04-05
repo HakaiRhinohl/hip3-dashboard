@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid,
@@ -600,6 +600,12 @@ export default function UsersDashboard() {
     setFilterPage(1);
     setFilterParams({ period: p, min_vol, tradfi_ratio, venues });
     await fetchFilter(p, min_vol, tradfi_ratio, venues, 1);
+  }, [fetchFilter]);
+
+  // Auto-apply default filter on mount so data shows immediately
+  useEffect(() => {
+    fetchFilter(30, 0, 0, DEXES, 1);
+    setFilterParams({ period: 30, min_vol: 0, tradfi_ratio: 0, venues: DEXES });
   }, [fetchFilter]);
 
   const handleFilterPageChange = useCallback((newPage) => {

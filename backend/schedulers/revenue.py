@@ -3,11 +3,15 @@ Revenue collector — supports km, xyz, flx, cash.
 Fetches candles, on-chain fees, and computes projections per DEX.
 """
 
+import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
 from schedulers import hl_post
+
+CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 
 logger = logging.getLogger("kinetiq.revenue")
@@ -68,6 +72,27 @@ class RevenueCollector:
         self.cfg = DEX_CONFIG[dex]
         self.data = None
         self.last_updated = None
+        self._cache_path = os.path.join(CACHE_DIR, f"revenue_{dex}.json")
+        self._load_cache()
+
+    def _load_cache(self):
+        try:
+            if os.path.exists(self._cache_path):
+                with open(self._cache_path) as f:
+                    cached = json.load(f)
+                self.data = cached.get("data")
+                self.last_updated = cached.get("last_updated")
+                logger.info(f"Loaded cached revenue data for {self.dex}")
+        except Exception as e:
+            logger.warning(f"Failed to load revenue cache for {self.dex}: {e}")
+
+    def _save_cache(self):
+        try:
+            os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
+            with open(self._cache_path, "w") as f:
+                json.dump({"data": self.data, "last_updated": self.last_updated}, f)
+        except Exception as e:
+            logger.warning(f"Failed to save revenue cache for {self.dex}: {e}")
 
     def get_data(self) -> dict:
         if self.data is None:
@@ -249,4 +274,5 @@ class RevenueCollector:
             "ticker_chart": ticker_chart,
         }
         self.last_updated = now_str
+        self._save_cache()
         logger.info(f"{self.dex} revenue: ${total_cum_vol:,.0f} vol, ${total_fees:,.2f} fees")
