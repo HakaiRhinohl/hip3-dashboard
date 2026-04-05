@@ -127,8 +127,14 @@ def _total_dates() -> int:
 
 # ── S3 download ────────────────────────────────────────────────────────────────
 
-def _download_parquet(dex: str, date_str: str, local_path: str) -> bool:
-    """Download a single parquet file via aws s3 cp. Returns True on success."""
+def _download_parquet(dex: str, date_str: str, local_path: str) -> str:
+    """
+    Download a single parquet file via aws s3 cp.
+    Returns:
+        "ok"      — file downloaded successfully
+        "no_data" — file doesn't exist in S3 (404/NoSuchKey), safe to mark as processed
+        "error"   — transient error (timeout, server error), should NOT mark as processed
+    """
     s3_key = f"{S3_BASE}/{dex}/fills/perp/all/date={date_str}/fills.parquet"
     cmd = [
         "aws", "s3", "cp", s3_key, local_path,
@@ -139,20 +145,21 @@ def _download_parquet(dex: str, date_str: str, local_path: str) -> bool:
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=120)
         if result.returncode == 0:
-            return True
+            return "ok"
         # 404 / NoSuchKey is normal for dates with no data
         stderr = result.stderr.decode("utf-8", errors="replace")
         if "NoSuchKey" in stderr or "404" in stderr or "does not exist" in stderr:
             logger.debug(f"No data for {dex}/{date_str} (expected)")
+            return "no_data"
         else:
             logger.warning(f"aws s3 cp failed for {dex}/{date_str}: {stderr[:200]}")
-        return False
+            return "error"
     except subprocess.TimeoutExpired:
         logger.warning(f"Download timed out for {dex}/{date_str}")
-        return False
+        return "error"
     except Exception as e:
         logger.warning(f"Download error for {dex}/{date_str}: {e}")
-        return False
+        return "error"
 
 
 # ── DuckDB processing ──────────────────────────────────────────────────────────
@@ -422,9 +429,10 @@ def run_users_bootstrap():
         with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False, prefix=f"hip3_fills_{dex}_{date_str}_") as tmp:
             local_path = tmp.name
 
+        mark_processed = False
         try:
-            ok = _download_parquet(dex, date_str, local_path)
-            if ok:
+            status = _download_parquet(dex, date_str, local_path)
+            if status == "ok":
                 rows = _process_parquet(local_path, dex, date_str)
                 if rows:
                     _upsert_rows(conn, rows, dex, date_str)
@@ -432,8 +440,13 @@ def run_users_bootstrap():
                     logger.info(f"  [{i+1}/{len(pending)}] {dex}/{date_str}: {len(rows)} addresses")
                 else:
                     logger.debug(f"  [{i+1}/{len(pending)}] {dex}/{date_str}: no rows")
-            else:
+                mark_processed = True
+            elif status == "no_data":
                 logger.debug(f"  [{i+1}/{len(pending)}] {dex}/{date_str}: skipped (no file)")
+                mark_processed = True
+            else:
+                # Transient error — do NOT mark as processed so it gets retried
+                logger.warning(f"  [{i+1}/{len(pending)}] {dex}/{date_str}: download error, will retry later")
         except Exception as e:
             logger.error(f"  [{i+1}/{len(pending)}] {dex}/{date_str} failed: {e}", exc_info=True)
         finally:
@@ -442,12 +455,12 @@ def run_users_bootstrap():
             except OSError:
                 pass
 
-        # Mark processed regardless (even if no data, so we don't retry)
-        conn.execute(
-            "INSERT OR REPLACE INTO bootstrap_progress (dex, date, processed_at) VALUES (?, ?, ?)",
-            (dex, date_str, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
+        if mark_processed:
+            conn.execute(
+                "INSERT OR REPLACE INTO bootstrap_progress (dex, date, processed_at) VALUES (?, ?, ?)",
+                (dex, date_str, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
 
     _recompute_daily_new_users(conn)
     conn.close()
@@ -488,14 +501,20 @@ def run_users_incremental():
         with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False, prefix=f"hip3_fills_{dex}_{date_str}_") as tmp:
             local_path = tmp.name
 
+        mark_processed = False
         try:
-            ok = _download_parquet(dex, date_str, local_path)
-            if ok:
+            status = _download_parquet(dex, date_str, local_path)
+            if status == "ok":
                 rows = _process_parquet(local_path, dex, date_str)
                 if rows:
                     _upsert_rows(conn, rows, dex, date_str)
                     conn.commit()
                     logger.info(f"  incremental {dex}/{date_str}: {len(rows)} addresses")
+                mark_processed = True
+            elif status == "no_data":
+                mark_processed = True
+            else:
+                logger.warning(f"  incremental {dex}/{date_str}: download error, will retry later")
         except Exception as e:
             logger.error(f"  incremental {dex}/{date_str} failed: {e}", exc_info=True)
         finally:
@@ -504,11 +523,12 @@ def run_users_incremental():
             except OSError:
                 pass
 
-        conn.execute(
-            "INSERT OR REPLACE INTO bootstrap_progress (dex, date, processed_at) VALUES (?, ?, ?)",
-            (dex, date_str, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
+        if mark_processed:
+            conn.execute(
+                "INSERT OR REPLACE INTO bootstrap_progress (dex, date, processed_at) VALUES (?, ?, ?)",
+                (dex, date_str, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
 
     _recompute_daily_new_users(conn)
     conn.close()
