@@ -137,11 +137,23 @@ export default function RevenueDashboard({ dexId = "km" }) {
     : (d.eff_total_bps || d.eff_deployer_bps || 0);
   const normalBps = isKm ? KM_NORMAL_BPS : 0;
   const avg7d = d.avg_7d || 0;
-  const avg30d = d.avg_30d || 0;
+  const activeDays = d.num_days || 0;
 
-  // Projections
-  const annGrowth = avg30d * 365 * effBps / 10000;
-  const annNormal = isKm ? avg30d * 365 * normalBps / 10000 : 0;
+  // Annualized average since launch, based on realized cumulative fees.
+  const annDeployer = activeDays > 0 ? (fees.deployer / activeDays) * 365 : 0;
+  const annBuilder = activeDays > 0 ? (fees.builder / activeDays) * 365 : 0;
+  const annTotal = annDeployer + annBuilder;
+  const normalMultiplier = isKm && effBps > 0 ? (normalBps / effBps) : 0;
+  const annNormalDeployer = isKm ? annDeployer * normalMultiplier : 0;
+  const annNormalTotal = isKm ? annNormalDeployer + annBuilder : 0;
+  const annualizedBreakdown = isKm
+    ? [
+      { name: "Actual", deployer: annDeployer, builder: annBuilder },
+      { name: "Normal", deployer: annNormalDeployer, builder: annBuilder },
+    ]
+    : [
+      { name: "Actual", deployer: annDeployer, builder: annBuilder },
+    ];
 
   const pieData = [
     { name: "Deployer Fees", value: fees.deployer, color: C.amber },
@@ -180,9 +192,9 @@ export default function RevenueDashboard({ dexId = "km" }) {
         <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day (7d avg)`} accent={C.cyan} />
         <StatCard label="Total Fees" value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
         <StatCard label={isKm ? "Effective Rate (Growth)" : "Effective Rate"} value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={normalBps > 0 ? `${normalBps.toFixed(2)} bps normal mode` : isKm ? "No data" : "Deployer + builder"} accent={accent} />
-        <StatCard label={isKm ? "Ann. Revenue (Growth)" : "Ann. Revenue"} value={annGrowth > 0 ? fmt(annGrowth) : "—"} sub={annGrowth > 0 ? `${fmt(annGrowth / 12)}/mo` : ""} accent={accent} />
+        <StatCard label="Ann. Revenue" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · avg since launch` : ""} accent={accent} />
         {isKm ? (
-          <StatCard label="Ann. Revenue (Normal)" value={annNormal > 0 ? fmt(annNormal) : "—"} sub={annNormal > 0 ? `${fmt(annNormal / 12)}/mo` : ""} accent={C.purple} />
+          <StatCard label="Ann. Revenue (Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · same avg volume` : ""} accent={C.purple} />
         ) : (
           <StatCard label="Net Deposit" value={fmt(d.total_net_deposit)} sub="Total deposited in DEX" accent={C.purple} />
         )}
@@ -272,14 +284,11 @@ export default function RevenueDashboard({ dexId = "km" }) {
               )}
             </div>
             <div>
-              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Annualized Revenue (30d run-rate)</h3>
-              {annGrowth > 0 ? (
+              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Annualized Revenue (avg since launch)</h3>
+              {annTotal > 0 ? (
                 <>
                   <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={[
-                      { name: "Growth", deployer: annGrowth, builder: isKm ? (fees.builder / d.num_days * 365) : 0 },
-                      { name: "Normal", deployer: annNormal, builder: isKm ? (fees.builder / d.num_days * 365) : 0 },
-                    ]} layout="vertical" barCategoryGap="25%">
+                    <BarChart data={annualizedBreakdown} layout="vertical" barCategoryGap="25%">
                       <CartesianGrid strokeDasharray="3 3" stroke={C.subtle} opacity={0.3} horizontal={false} />
                       <XAxis type="number" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} />
                       <YAxis type="category" dataKey="name" tick={{ fill: C.text, fontSize: 11, fontWeight: 500 }} width={70} />
@@ -289,9 +298,13 @@ export default function RevenueDashboard({ dexId = "km" }) {
                     </BarChart>
                   </ResponsiveContainer>
                   <div style={{ marginTop: 16, padding: "10px 14px", background: C.bg, borderRadius: 6, fontSize: 11, color: C.muted, textAlign: "center" }}>
-                    Growth: <strong style={{ color: accent }}>{fmt(annGrowth)}/yr</strong>
-                    {" → Normal: "}<strong style={{ color: C.purple }}>{fmt(annNormal)}/yr</strong>
-                    {annGrowth > 0 && <> = <strong style={{ color: C.amber }}>{(annNormal / annGrowth).toFixed(1)}x</strong></>}
+                    Actual: <strong style={{ color: accent }}>{fmt(annTotal)}/yr</strong>
+                    {isKm && annNormalTotal > 0 && (
+                      <>
+                        {" → Normal: "}<strong style={{ color: C.purple }}>{fmt(annNormalTotal)}/yr</strong>
+                        {annTotal > 0 && <> = <strong style={{ color: C.amber }}>{(annNormalTotal / annTotal).toFixed(1)}x</strong></>}
+                      </>
+                    )}
                   </div>
                 </>
               ) : (
