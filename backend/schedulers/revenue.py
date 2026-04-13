@@ -58,7 +58,8 @@ def _try_candle_download(coin_name: str, perp_dex: str | None = None) -> list:
     }
     if perp_dex:
         payload["perpDex"] = perp_dex
-    result = hl_post(payload, f"candle {coin_name}")
+    # Use fewer retries for candles — 500s are usually permanent (unsupported ticker)
+    result = hl_post(payload, f"candle {coin_name}", retries=1)
     if isinstance(result, list) and len(result) > 0:
         return result
     return []

@@ -69,7 +69,7 @@ def try_candle(coin: str, pdex: str, start_ms: int, end_ms: int) -> list:
         }
         if p:
             payload["perpDex"] = p
-        result = hl_post(payload, f"candle {c}")
+        result = hl_post(payload, f"candle {c}", retries=1)
         if isinstance(result, list) and len(result) > 0:
             return result
         time.sleep(0.1)
