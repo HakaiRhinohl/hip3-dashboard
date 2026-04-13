@@ -468,21 +468,18 @@ def run_users_bootstrap():
 
 
 def run_users_incremental():
-    """Check for any dates beyond last processed and run them."""
+    """Check for any dates beyond last processed and fill gaps from failed downloads."""
     logger.info("run_users_incremental: starting")
     conn = _open_db()
     processed = _processed_dates(conn)
 
     today = date.today()
     data_end = today - timedelta(days=2)
-    # Look at yesterday (data lags 1 day) and maybe today
     pending = []
     for dex, start in DEX_START.items():
-        # Find the latest processed date for this dex
-        dex_dates = sorted([d for (dx, d) in processed if dx == dex])
-        last_processed = date.fromisoformat(dex_dates[-1]) if dex_dates else start - timedelta(days=1)
-        # Process from day after last_processed up to data_end
-        cur = last_processed + timedelta(days=1)
+        # Scan the full range from DEX start to data_end for any unprocessed dates
+        # This catches both new dates AND gaps from previous download errors
+        cur = start
         end = min(today - timedelta(days=1), data_end)
         while cur <= end:
             date_str = cur.strftime("%Y-%m-%d")
