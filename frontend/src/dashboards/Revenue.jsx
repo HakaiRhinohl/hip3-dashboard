@@ -57,75 +57,54 @@ function StatCard({ label, value, sub, accent }) {
 }
 
 export default function RevenueDashboard({ dexId = "km" }) {
-  // Use comparison endpoint which has data for all dexes
-  const { data: compData, loading: compLoading, error: compError, refetch: compRefetch } = useApiData("/api/comparison");
-  // Also use revenue endpoint for km-specific detailed data
-  const { data: revData, loading: revLoading, error: revError, refetch: revRefetch } = useApiData("/api/revenue");
+  const { data: revData, loading: revLoading, error: revError, refetch: revRefetch } =
+    useApiData(`/api/revenue?dex=${dexId}`);
 
   const [tab, setTab] = useState("revenue");
 
   const meta = DEX_META[dexId] || DEX_META.km;
   const accent = meta.color;
 
-  // Extract this dex's data from comparison endpoint
   const dexData = useMemo(() => {
-    if (!compData?.dex_summaries) return null;
-    return compData.dex_summaries.find((s) => s.dex === dexId);
-  }, [compData, dexId]);
+    if (!revData || revData.status === "loading") return null;
+    return {
+      dex: revData.dex || dexId,
+      num_tickers: revData.num_tickers || 0,
+      num_days: revData.days_since_launch || 0,
+      cum_volume: revData.total_volume || 0,
+      deployer_fees: revData.fees?.deployer || 0,
+      builder_fees: revData.fees?.builder || 0,
+      total_fees: revData.fees?.total || 0,
+      eff_deployer_bps: revData.rates?.eff_deployer_bps_growth || 0,
+      eff_total_bps: (revData.rates?.eff_deployer_bps_growth || 0) + (revData.rates?.eff_builder_bps || 0),
+      total_net_deposit: revData.total_net_deposit || 0,
+      avg_7d: revData.averages?.avg_7d || 0,
+      avg_30d: revData.averages?.avg_30d || 0,
+      top_tickers: revData.top_tickers || revData.ticker_chart || [],
+    };
+  }, [revData, dexId]);
 
-  // Build daily chart for this specific dex
   const chartData = useMemo(() => {
-    if (!compData?.daily_chart) return [];
-    return compData.daily_chart
-      .filter((d) => d[`${dexId}_vol`] > 0)
-      .map((d) => {
-        const vol = d[`${dexId}_vol`];
-        const cum = d[`${dexId}_cum`];
-        return { date: d.date, dt: d.date.slice(5), daily_volume_usd: vol, cum_volume_usd: cum };
-      });
-  }, [compData, dexId]);
+    if (!revData?.daily_chart) return [];
+    return revData.daily_chart.map((d) => ({ ...d, dt: d.date.slice(5) }));
+  }, [revData]);
 
-  // For km, use the detailed revenue data; for others, derive from comparison
   const isKm = dexId === "km";
 
-  // Compute fee chart data
   const feeChartData = useMemo(() => {
-    if (isKm && revData?.daily_chart) {
-      let cg = 0, cn = 0, ctg = 0, ctn = 0;
-      return revData.daily_chart.map((d) => {
-        cg += d.deployer_fee_growth;
-        cn += d.deployer_fee_normal;
-        ctg += d.deployer_fee_growth + (d.builder_fee || 0);
-        ctn += d.deployer_fee_normal + (d.builder_fee || 0);
-        return { ...d, dt: d.date.slice(5), cum_total_g: ctg, cum_total_n: ctn };
-      });
-    }
-    if (!dexData || !chartData.length) return [];
-    // Use eff_total_bps (includes builder) if available, else eff_deployer_bps
-    const bps = dexData.eff_total_bps || dexData.eff_deployer_bps || 0;
-    if (bps === 0) return [];
     let cum = 0;
     return chartData.map((d) => {
-      const totalFee = d.daily_volume_usd * bps / 10000;
-      const builderFee = dexData.total_fees > 0 && dexData.builder_fees > 0
-        ? totalFee * (dexData.builder_fees / dexData.total_fees)
-        : 0;
-      const deployerFee = totalFee - builderFee;
+      const totalFee = d.total_fee_growth ?? ((d.deployer_fee_growth || 0) + (d.builder_fee || 0));
       cum += totalFee;
-      return {
-        ...d,
-        deployer_fee_growth: Math.round(deployerFee * 100) / 100,
-        builder_fee: Math.round(builderFee * 100) / 100,
-        cum_total_g: cum,
-      };
+      return { ...d, cum_total_g: cum };
     });
-  }, [isKm, revData, dexData, chartData]);
+  }, [chartData]);
 
-  const loading = compLoading || (isKm && revLoading);
-  const error = compError || (isKm && revError);
+  const loading = revLoading;
+  const error = revError;
 
   if (loading) return <Loading message={`Loading ${meta.short} data...`} />;
-  if (error && !dexData) return <ErrorState error={error} onRetry={compRefetch} />;
+  if (error && !dexData) return <ErrorState error={error} onRetry={revRefetch} />;
   if (!dexData) return <Loading message={`Waiting for ${meta.short} data...`} />;
 
   const d = dexData;
@@ -179,7 +158,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
             <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>{meta.name}</h1>
           </div>
           <p style={{ color: C.muted, fontSize: 11, margin: "4px 0 0 18px" }}>
-            Revenue Analysis — 100% on-chain — updated {compData?.generated_at || "..."}
+            Revenue Analysis — 100% on-chain — updated {revData?.generated_at || "..."}
           </p>
         </div>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 12px", fontSize: 10, color: C.muted }}>
@@ -340,7 +319,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
       </div>
 
       <div style={{ marginTop: 16, fontSize: 10, color: C.subtle, textAlign: "center" }}>
-        Hyperliquid L1 API · Auto-refresh every 5 min · {compData?.generated_at}
+        Hyperliquid L1 API · Auto-refresh every 5 min · {revData?.generated_at}
       </div>
     </div>
   );
