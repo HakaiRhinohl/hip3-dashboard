@@ -3,7 +3,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid,
 } from "recharts";
-import { useApiData } from "../hooks/useApiData";
+import { apiUrl, useApiData } from "../hooks/useApiData";
 import { Loading, ErrorState } from "../components/States";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -584,8 +584,7 @@ export default function UsersDashboard() {
     try {
       const venueStr = venues.join(",");
       const url = `/api/users/filter?period=${p}&min_vol=${min_vol}&tradfi_ratio=${tradfi_ratio}&venues=${encodeURIComponent(venueStr)}&page=${page}&page_size=50`;
-      const apiBase = import.meta.env.VITE_API_URL || "";
-      const res = await fetch(`${apiBase}${url}`);
+      const res = await fetch(apiUrl(url));
       const data = await res.json();
       setFilterResult(data);
     } catch (err) {
