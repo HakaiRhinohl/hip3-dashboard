@@ -302,7 +302,7 @@ async def users_type_breakdown():
     return users_collector.get_type_breakdown()
 
 
-@app.post("/api/admin/migrate_tradfi")
+@app.post("/api/admin/migrate_tradfi", include_in_schema=False)
 async def admin_migrate_tradfi():
     """
     Trigger the DEX-based TradFi migration manually.
