@@ -139,6 +139,57 @@ def health():
     }
 
 
+@app.get("/api/snapshot")
+def get_snapshot(
+    timeline_days: int = Query(default=90, ge=1, le=365),
+    liquidity_hours: int = Query(default=4, ge=1, le=168),
+):
+    """Return every dashboard dataset in one document-friendly response."""
+    generated_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "schema_version": "1.0",
+        "generated_at": generated_at,
+        "parameters": {
+            "timeline_days": timeline_days,
+            "liquidity_hours": liquidity_hours,
+        },
+        "collector_updates": {
+            "revenue": {dex: revenue_collectors[dex].last_updated for dex in REVENUE_DEXES},
+            "comparison": comparison_collector.last_updated,
+            "liquidity": liquidity_collector.last_updated,
+            "users": users_collector.last_updated,
+        },
+        "revenue": {
+            dex: revenue_collectors[dex].get_data()
+            for dex in REVENUE_DEXES
+        },
+        "comparison": comparison_collector.get_data(),
+        "liquidity": {
+            "summary": liquidity_collector.get_stats(hours=liquidity_hours),
+            "tickers": liquidity_collector.get_available_tickers(),
+        },
+        "users": {
+            "summary": users_collector.get_summary(),
+            "timeline": users_collector.get_timeline(period=timeline_days),
+            "top_venues": users_collector.get_top_venues(),
+            "type_breakdown": users_collector.get_type_breakdown(),
+        },
+        "endpoints": {
+            "snapshot": "/api/snapshot",
+            "health": "/api/health",
+            "revenue": "/api/revenue?dex=km|xyz|flx|cash",
+            "comparison": "/api/comparison",
+            "liquidity": "/api/liquidity?hours=1..168",
+            "liquidity_timeseries": "/api/liquidity/timeseries?ticker=US500&hours=4",
+            "liquidity_tickers": "/api/liquidity/tickers",
+            "users_summary": "/api/users/summary",
+            "users_timeline": "/api/users/timeline?period=90",
+            "users_top_venues": "/api/users/top_venues",
+            "users_type_breakdown": "/api/users/type_breakdown",
+        },
+    }
+
+
 @app.get("/api/revenue")
 def get_revenue(dex: str = Query(default="km")):
     """Revenue data per DEX. ?dex=km|xyz|flx|cash"""

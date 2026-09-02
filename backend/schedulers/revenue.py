@@ -40,6 +40,52 @@ KINETIQ_ONCHAIN_SNAPSHOT = {
     "operations_reinvestment": 271_200.0,
 }
 
+KINETIQ_LST_SNAPSHOT = {
+    "as_of": "2026-09-02",
+    "khype": {
+        "tvl_hype": 15_000_000.0,
+        "tvl_usd": 1_260_000_000.0,
+        "gross_staking_apr": 0.02112,
+        "implied_annual_gross_rewards_usd": 26_611_200.0,
+        "performance_fee_rate": 0.10,
+        "historical_protocol_revenue_usd": 2_466_790.0,
+        "historical_treasury_usd": 1_910_000.0,
+        "historical_kntq_buybacks_usd": 553_800.0,
+        "current_policy": {
+            "effective_from": "2026-04-09",
+            "kntq_buybacks_share": 0.70,
+            "treasury_share": 0.30,
+        },
+        "quarterly_revenue_usd": [
+            {"quarter": "2025-Q3", "value": 93_000.0, "partial": False},
+            {"quarter": "2025-Q4", "value": 1_370_000.0, "partial": False},
+            {"quarter": "2026-Q1", "value": 191_440.0, "partial": False},
+            {"quarter": "2026-Q2", "value": 467_670.0, "partial": False},
+            {"quarter": "2026-Q3", "value": 344_680.0, "partial": True},
+        ],
+        "methodology_note": "Gross staking rewards are TVL multiplied by gross APR; they are not TVL or protocol revenue.",
+    },
+    "kmhype": {
+        "markets_allocation_usd": KINETIQ_ONCHAIN_SNAPSHOT["kmhype_allocation"],
+        "allocation_share_of_deployer_revenue": 0.10,
+    },
+    "kntq_burn_flow": {
+        "spot_deployer": "0x51172933b60847085e2a959e860e2ec9e240ac09",
+        "assistance_fund": "0xfefefefefefefefefefefefefefefefefefefefe",
+        "token_id": "0xbd31bd605c0a1b82c72aae3587f9061f",
+        "observed_transfer_count_floor": 40,
+        "explorer": "https://hypurrscan.io/address/0x51172933b60847085e2a959e860e2ec9e240ac09#txs",
+        "included_in_markets_revenue": False,
+    },
+    "wallets": {
+        "markets_fee_recipient": "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2",
+        "markets_builder": "0x42f3226007290b02c5a0b15bccbb1ba6df04f992",
+        "kmhype_staking_manager": "0x71f0019cc7fa79e4f42587fb7b9a817d8d2429ec",
+        "skntq_buybacks": "0xaa3b7392052d62928cc87701e3ca6fb6630bb6e2",
+        "khype_treasury": "0x64bD77698Ab7C3Fd0a1F54497b228ED7a02098E3",
+    },
+}
+
 # On-chain addresses per DEX
 DEX_CONFIG = {
     "km": {
@@ -387,6 +433,7 @@ class RevenueCollector:
                 "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
             }
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
+            self.data["lst"] = KINETIQ_LST_SNAPSHOT
             self.data["methodology"] = {
                 "volume": "Sum of daily candle base volume multiplied by close price across km and mkts",
                 "historical_effective_rate": "Protocol revenue divided by cumulative estimated USD volume",
