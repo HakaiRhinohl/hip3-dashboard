@@ -38,6 +38,12 @@ const KHYPE_REVENUE = {
   tvlUsd: 1260000000,
   grossStakingApr: 0.02112,
   tvlAsOf: "2026-09-02",
+  q4Onchain: {
+    visibleFrom: "2025-10-08",
+    transferEvents: 5653,
+    khypeReceived: 29755.48,
+    tvlPeakUsd: 2653266457,
+  },
   quarters: [
     { label: "Q3 '25", value: 93000 },
     { label: "Q4 '25", value: 1370000 },
@@ -407,7 +413,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                   <div>
                     <div style={{ color: accent, fontSize: 18, fontWeight: 700 }}>kHYPE</div>
-                    <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>10% performance fee</div>
+                    <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>Performance fee + unstake fee capture</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>Historical revenue</div>
@@ -491,6 +497,9 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   </div>
                 ))}
                 <div style={{ color: C.muted, fontSize: 9, marginTop: 12 }}>* Q3 2026 partial through the audited snapshot.</div>
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55, marginTop: 10 }}>
+                  Q4 2025 was not staking yield alone. From {KHYPE_REVENUE.q4Onchain.visibleFrom}, the treasury received {KHYPE_REVENUE.q4Onchain.transferEvents.toLocaleString()} visible kHYPE fee-transfer events totaling {KHYPE_REVENUE.q4Onchain.khypeReceived.toLocaleString(undefined, { maximumFractionDigits: 0 })} kHYPE, mainly around unstake flows. TVL also peaked near {fmt(KHYPE_REVENUE.q4Onchain.tvlPeakUsd)} during October before falling through December.
+                </div>
               </div>
 
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
