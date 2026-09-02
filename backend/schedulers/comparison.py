@@ -164,6 +164,8 @@ class ComparisonCollector:
                 "total_fees": fees.get("total", 0),
                 "fee_coverage": revenue.get("fee_coverage", {}),
                 "eff_deployer_bps": rates.get("eff_deployer_bps_growth", 0),
+                "eff_deployer_bps_normal": rates.get("eff_deployer_bps_normal", 0),
+                "run_rate_deployer_bps_30d": rates.get("run_rate_deployer_bps_30d", 0),
                 "eff_total_bps": rates.get("eff_total_bps", 0),
                 "run_rate_total_bps_30d": rates.get("run_rate_total_bps_30d", 0),
                 "total_net_deposit": revenue.get("total_net_deposit", 0),

@@ -71,8 +71,12 @@ export default function RevenueSimulator() {
     const volData = volumeSourceData(volumeDex, apiData);
     if (!rateData || !volData) return null;
 
-    const effBps = rateData.eff_deployer_bps || 0;
-    const normalBps = effBps > 0 ? effBps / 0.10 : 0;
+    // Forward-looking rates, matching the per-DEX Revenue page: the current
+    // growth-mode run-rate and the documented normal-mode rate. NOT the
+    // lifetime cumulative average (eff_deployer_bps) divided by 10 -- that
+    // blends historical eras and doesn't reproduce the real normal-mode rate.
+    const effBps = rateData.run_rate_deployer_bps_30d || 0;
+    const normalBps = rateData.eff_deployer_bps_normal || 0;
     const avg30d = volData.avg_30d || 0;
     const avg7d = volData.avg_7d || 0;
 
@@ -100,8 +104,8 @@ export default function RevenueSimulator() {
     if (!apiData?.dex_summaries) return [];
     const rateData = apiData.dex_summaries.find((d) => d.dex === ratesDex);
     if (!rateData) return [];
-    const effBps = rateData.eff_deployer_bps || 0;
-    const normalBps = effBps > 0 ? effBps / 0.10 : 0;
+    const effBps = rateData.run_rate_deployer_bps_30d || 0;
+    const normalBps = rateData.eff_deployer_bps_normal || 0;
 
     return VOLUME_SOURCES.map((volDex) => {
       const volData = volumeSourceData(volDex, apiData);
@@ -245,8 +249,7 @@ export default function RevenueSimulator() {
             <tbody>
               {DEXES.map((rd) => {
                 const rateData = apiData?.dex_summaries?.find((d) => d.dex === rd);
-                const effBps = rateData?.eff_deployer_bps || 0;
-                const normalBps = effBps > 0 ? effBps / 0.10 : 0;
+                const normalBps = rateData?.eff_deployer_bps_normal || 0;
 
                 return (
                   <tr key={rd} style={{ borderBottom: `1px solid ${P.subtle}` }}>
