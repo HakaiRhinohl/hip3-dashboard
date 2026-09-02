@@ -53,9 +53,9 @@ KNOWN_COUNTERPARTIES = {
         "confirmed": True,
     },
     "0x55758d720e0f32328f7f1e1b3de6b637e0bec4ba": {
-        "label": "kHYPE buyback allocation (inferred)",
+        "label": "kHYPE buyback allocation",
         "category": "khype_staking_rewards",
-        "confirmed": False,
+        "confirmed": True,
     },
     "0x696238e0ca31c94e24ca4cbe7921754e172e4d0f": {
         # Holds ~1.24M KNTQ (from both the buyback wallet and the fee recipient)
@@ -206,6 +206,30 @@ class BuybacksCollector:
         confirmed_inbound = sum(r["usd"] for r in sources if r["confirmed"])
         unidentified_inbound = total_inbound - confirmed_inbound
 
+        # inbound - outbound is money that hasn't been forwarded OUT of the wallet
+        # yet, but it isn't sitting idle: the wallet already converts it to KNTQ on
+        # arrival. Confirm via the wallet's live spot balance rather than assuming.
+        spot_state = hl_post(
+            {"type": "spotClearinghouseState", "user": BUYBACK_WALLET},
+            "buybacks spot balance",
+        )
+        current_holdings = []
+        if isinstance(spot_state, dict):
+            for bal in spot_state.get("balances", []):
+                try:
+                    amount = float(bal.get("total", 0) or 0)
+                    cost_basis = float(bal.get("entryNtl", 0) or 0)
+                except (TypeError, ValueError):
+                    amount = cost_basis = 0.0
+                if amount <= 0:
+                    continue
+                current_holdings.append({
+                    "coin": bal.get("coin"),
+                    "amount": round(amount, 6),
+                    "cost_basis_usd": round(cost_basis, 2),
+                })
+        held_kntq = next((h for h in current_holdings if h["coin"] == "KNTQ"), None)
+
         self.data = {
             "generated_at": now_str,
             "wallet": BUYBACK_WALLET,
@@ -220,12 +244,14 @@ class BuybacksCollector:
             "totals": {
                 "inbound_usd": round(total_inbound, 2),
                 "outbound_kntq_usd": round(total_outbound, 2),
-                "net_undeployed_usd": round(total_inbound - total_outbound, 2),
+                "held_kntq_amount": held_kntq["amount"] if held_kntq else 0,
+                "held_kntq_cost_basis_usd": held_kntq["cost_basis_usd"] if held_kntq else 0,
                 "confirmed_inbound_usd": round(confirmed_inbound, 2),
                 "confirmed_inbound_pct": round(confirmed_inbound / total_inbound * 100, 2) if total_inbound > 0 else 0,
                 "unidentified_inbound_usd": round(unidentified_inbound, 2),
                 "transaction_count": len(ledger),
             },
+            "current_holdings": current_holdings,
             "sources": sources,
             "destinations": destinations,
             "daily_chart": daily_chart,

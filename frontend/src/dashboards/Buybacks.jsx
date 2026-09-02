@@ -161,7 +161,7 @@ export default function BuybacksDashboard() {
       <div className="buybacks-kpis" style={{ gap: 10, marginBottom: 20 }}>
         <StatCard label="Total Inbound" value={fmt(totals.inbound_usd)} sub={`${totals.transaction_count} ledger events`} accent={C.cyan} />
         <StatCard label="KNTQ Bought Back" value={fmt(totals.outbound_kntq_usd)} sub="Sent out of the buyback wallet" accent={C.amber} />
-        <StatCard label="Net Undeployed" value={fmt(totals.net_undeployed_usd)} sub="Received but not yet converted to KNTQ" accent={C.purple} />
+        <StatCard label="KNTQ Held in Wallet" value={fmt(totals.held_kntq_cost_basis_usd)} sub={totals.held_kntq_amount ? `${Math.round(totals.held_kntq_amount).toLocaleString("en-US")} KNTQ · already bought, not yet forwarded` : "Already bought, not yet forwarded"} accent={C.purple} />
         <StatCard label="Confirmed Source Coverage" value={`${totals.confirmed_inbound_pct ?? 0}%`} sub={`${fmt(totals.confirmed_inbound_usd)} matched to known wallets`} accent={C.green} />
       </div>
 
