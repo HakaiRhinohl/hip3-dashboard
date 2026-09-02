@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from schedulers import hl_post
 
@@ -22,6 +22,7 @@ logger = logging.getLogger("kinetiq.revenue")
 
 LAUNCH_MS = int(datetime(2025, 11, 1).timestamp() * 1000)
 KINETIQ_MIGRATION_DATE = "2026-06-20"
+KINETIQ_NORMAL_DEPLOYER_BPS = 4.0743
 
 # Audited on-chain snapshot. These are floors, not hard-coded totals: live
 # cumulative balances can move the dashboard above them, but never erase the
@@ -49,6 +50,7 @@ DEX_CONFIG = {
             {"dex": "mkts", "quote": "USDC", "era": "current"},
         ],
         "growth_discount": 0.10,
+        "normal_deployer_bps": KINETIQ_NORMAL_DEPLOYER_BPS,
     },
     "xyz": {
         "fee_recipient": "0x9cd0a696c7cbb9d44de99268194cb08e5684e5fe",
@@ -192,12 +194,21 @@ class RevenueCollector:
 
         total_cum_vol = sum(daily_vol.values())
         num_days = len(daily_vol)
-        avg_daily = total_cum_vol / num_days if num_days > 0 else 0
         sorted_dates = sorted(daily_vol.keys())
-        last_7 = sorted_dates[-7:] if len(sorted_dates) >= 7 else sorted_dates
-        last_30 = sorted_dates[-30:] if len(sorted_dates) >= 30 else sorted_dates
-        avg_7d = sum(daily_vol[d] for d in last_7) / len(last_7) if last_7 else 0
-        avg_30d = sum(daily_vol[d] for d in last_30) / len(last_30) if last_30 else 0
+
+        def trailing_calendar_average(days: int) -> float:
+            if not sorted_dates:
+                return 0
+            end_date = datetime.strptime(sorted_dates[-1], "%Y-%m-%d").date()
+            start_date = end_date - timedelta(days=days - 1)
+            total = sum(
+                daily_vol.get((start_date + timedelta(days=offset)).isoformat(), 0)
+                for offset in range(days)
+            )
+            return total / days
+
+        avg_7d = trailing_calendar_average(7)
+        avg_30d = trailing_calendar_average(30)
 
         # days since first data point
         if sorted_dates:
@@ -205,6 +216,7 @@ class RevenueCollector:
             days_since_launch = (datetime.now() - first_date).days or 1
         else:
             days_since_launch = 1
+        avg_daily = total_cum_vol / days_since_launch if days_since_launch > 0 else 0
 
         # Step 4: On-chain fees
         # Deployer fees: clearinghouseState.accountValue is the CURRENT unclaimed balance.
@@ -248,17 +260,13 @@ class RevenueCollector:
                 eff_deployer_bps = (deployer_fees / total_cum_vol) * 10000
             if total_builder > 0:
                 eff_builder_bps = (total_builder / total_cum_vol) * 10000
+            configured_normal_bps = self.cfg.get("normal_deployer_bps")
             discount = self.cfg.get("growth_discount")
-            normal_deployer_bps = eff_deployer_bps / discount if discount else eff_deployer_bps
-
-        # For km: recalculate bps from the watermark-based deployer_fees so that
-        # daily_chart projections stay consistent. The deployer baseline ($92,700) is
-        # seeded in fee_db.DEPLOYER_BASELINES and grows as accountValue increases.
-        if self.dex == "km" and total_cum_vol > 0 and deployer_fees > 0:
-            eff_deployer_bps = (deployer_fees / total_cum_vol) * 10000
-            discount = self.cfg.get("growth_discount")  # 0.10
-            normal_deployer_bps = eff_deployer_bps / discount
-            total_fees = deployer_fees + total_builder
+            normal_deployer_bps = (
+                configured_normal_bps
+                if configured_normal_bps is not None
+                else eff_deployer_bps / discount if discount else eff_deployer_bps
+            )
 
         # Step 5: Net deposit
         total_net_deposit = 0.0
@@ -318,6 +326,14 @@ class RevenueCollector:
                 "pct": round(volume / total_cum_vol * 100, 1) if total_cum_vol > 0 else 0,
             })
 
+        effective_total_bps = eff_deployer_bps + eff_builder_bps
+        annualized_revenue = total_fees / days_since_launch * 365 if days_since_launch > 0 else 0
+        normal_cumulative_revenue = total_cum_vol * normal_deployer_bps / 10000 + total_builder
+        annualized_normal_revenue = (
+            normal_cumulative_revenue / days_since_launch * 365
+            if days_since_launch > 0 else 0
+        )
+
         self.data = {
             "dex": self.dex,
             "generated_at": now_str,
@@ -334,6 +350,14 @@ class RevenueCollector:
                 "eff_deployer_bps_growth": round(eff_deployer_bps, 4),
                 "eff_deployer_bps_normal": round(normal_deployer_bps, 4),
                 "eff_builder_bps": round(eff_builder_bps, 4),
+                "eff_total_bps": round(effective_total_bps, 4),
+            },
+            "kpis": {
+                "cumulative_volume": round(total_cum_vol),
+                "protocol_revenue": round(total_fees, 2),
+                "effective_total_bps": round(effective_total_bps, 4),
+                "annualized_revenue": round(annualized_revenue, 2),
+                "annualized_normal_revenue": round(annualized_normal_revenue, 2),
             },
             "averages": {"daily": round(avg_daily), "avg_7d": round(avg_7d), "avg_30d": round(avg_30d)},
             "projections": projections,
@@ -347,6 +371,12 @@ class RevenueCollector:
                 "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
             }
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
+            self.data["methodology"] = {
+                "volume": "Sum of daily candle base volume multiplied by close price across km and mkts",
+                "effective_rate": "Protocol revenue divided by cumulative estimated USD volume",
+                "annualized_revenue": "Attributed protocol revenue divided by elapsed calendar days, multiplied by 365",
+                "normal_mode": f"{KINETIQ_NORMAL_DEPLOYER_BPS} deployer bps plus the realized builder rate",
+            }
         self.last_updated = now_str
         self._save_cache()
         logger.info(f"{self.dex} revenue: ${total_cum_vol:,.0f} vol, ${total_fees:,.2f} fees")

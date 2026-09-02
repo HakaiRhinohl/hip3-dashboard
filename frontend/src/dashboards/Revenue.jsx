@@ -132,12 +132,16 @@ export default function RevenueDashboard({ dexId = "km" }) {
       dex: revData.dex || dexId,
       num_tickers: revData.num_tickers || 0,
       num_days: revData.days_since_launch || 0,
-      cum_volume: revData.total_volume || 0,
+      cum_volume: revData.kpis?.cumulative_volume ?? revData.total_volume ?? 0,
       deployer_fees: revData.fees?.deployer || 0,
       builder_fees: revData.fees?.builder || 0,
-      total_fees: revData.fees?.total || 0,
+      total_fees: revData.kpis?.protocol_revenue ?? revData.fees?.total ?? 0,
       eff_deployer_bps: revData.rates?.eff_deployer_bps_growth || 0,
-      eff_total_bps: (revData.rates?.eff_deployer_bps_growth || 0) + (revData.rates?.eff_builder_bps || 0),
+      eff_builder_bps: revData.rates?.eff_builder_bps || 0,
+      eff_total_bps: revData.kpis?.effective_total_bps ?? revData.rates?.eff_total_bps ?? ((revData.rates?.eff_deployer_bps_growth || 0) + (revData.rates?.eff_builder_bps || 0)),
+      normal_deployer_bps: revData.rates?.eff_deployer_bps_normal || 0,
+      annualized_revenue: revData.kpis?.annualized_revenue,
+      annualized_normal_revenue: revData.kpis?.annualized_normal_revenue,
       total_net_deposit: revData.total_net_deposit || 0,
       avg_7d: revData.averages?.avg_7d || 0,
       avg_30d: revData.averages?.avg_30d || 0,
@@ -182,22 +186,21 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const d = dexData;
   const fees = { deployer: d.deployer_fees || 0, builder: d.builder_fees || 0, total: d.total_fees || 0 };
-  // km: use deployer bps (growth vs normal distinction applies)
-  // others: use total bps (deployer + builder combined, no growth/normal split)
-  const effBps = isKm
-    ? (d.eff_deployer_bps || d.eff_total_bps || 0)
-    : (d.eff_total_bps || d.eff_deployer_bps || 0);
-  const normalBps = isKm ? KM_NORMAL_BPS : 0;
+  const deployerBps = d.eff_deployer_bps || 0;
+  const builderBps = d.eff_builder_bps || 0;
+  const effBps = d.eff_total_bps || deployerBps + builderBps;
+  const normalBps = isKm ? (d.normal_deployer_bps || KM_NORMAL_BPS) : 0;
   const avg7d = d.avg_7d || 0;
   const activeDays = d.num_days || 0;
 
   // Annualized average since launch, based on realized cumulative fees.
   const annDeployer = activeDays > 0 ? (fees.deployer / activeDays) * 365 : 0;
   const annBuilder = activeDays > 0 ? (fees.builder / activeDays) * 365 : 0;
-  const annTotal = annDeployer + annBuilder;
-  const normalMultiplier = isKm && effBps > 0 ? (normalBps / effBps) : 0;
-  const annNormalDeployer = isKm ? annDeployer * normalMultiplier : 0;
-  const annNormalTotal = isKm ? annNormalDeployer + annBuilder : 0;
+  const annTotal = d.annualized_revenue ?? (annDeployer + annBuilder);
+  const normalMultiplier = isKm && deployerBps > 0 ? (normalBps / deployerBps) : 0;
+  const fallbackAnnNormal = isKm ? annDeployer * normalMultiplier + annBuilder : 0;
+  const annNormalTotal = isKm ? (d.annualized_normal_revenue ?? fallbackAnnNormal) : 0;
+  const annNormalDeployer = isKm ? Math.max(0, annNormalTotal - annBuilder) : 0;
   const annualizedBreakdown = isKm
     ? [
       { name: "Actual", deployer: annDeployer, builder: annBuilder },
@@ -275,12 +278,12 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
       {/* KPIs */}
       <div className="revenue-kpis" style={{ gap: 10, marginBottom: 20 }}>
-        <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day (7d avg)`} accent={C.cyan} />
+        <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day · 7d calendar avg`} accent={C.cyan} />
         <StatCard label={isKm ? "Protocol Revenue" : "Total Fees"} value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
-        <StatCard label={isKm ? "Effective Rate (Growth)" : "Effective Rate"} value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={normalBps > 0 ? `${normalBps.toFixed(2)} bps normal mode` : isKm ? "No data" : "Deployer + builder"} accent={accent} />
-        <StatCard label="Ann. Revenue" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · avg since launch` : ""} accent={accent} />
+        <StatCard label={isKm ? "Effective Take Rate" : "Effective Rate"} value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={isKm ? `${deployerBps.toFixed(2)} deployer + ${builderBps.toFixed(2)} builder` : "Deployer + builder"} accent={accent} />
+        <StatCard label="Ann. Revenue" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · historical avg` : ""} accent={accent} />
         {isKm ? (
-          <StatCard label="Ann. Revenue (Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · same avg volume` : ""} accent={C.purple} />
+          <StatCard label="Ann. Revenue (Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · ${normalBps.toFixed(2)} deployer bps` : ""} accent={C.purple} />
         ) : (
           <StatCard label="Net Deposit" value={fmt(d.total_net_deposit)} sub="Total deposited in DEX" accent={C.purple} />
         )}
@@ -319,7 +322,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
             ))}
             <div style={{ flexBasis: "100%", color: C.muted, fontSize: 9 }}>
-              Audited snapshot {reconstruction.as_of}. DefiLlama is excluded from these totals when it conflicts with transaction-level flows.
+              Audited snapshot {reconstruction.as_of}. Volume = daily base volume × close; take rate = captured revenue ÷ volume; annualization = historical daily average × 365. DefiLlama is excluded when it conflicts with transaction-level flows.
             </div>
           </div>
         </>
