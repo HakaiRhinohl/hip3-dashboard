@@ -1,17 +1,32 @@
 """
-Buybacks collector — tracks the sKNTQ buyback wallet's on-chain flows.
+Buybacks collector — tracks the sKNTQ buyback wallet's on-chain activity.
 
 Kinetiq does not publish a machine-readable buyback feed, so this is
-reconstructed directly from Hyperliquid's userNonFundingLedgerUpdates for the
-publicly listed buyback wallet: every spot send/transfer in or out is
-attributed to a counterparty address.
+reconstructed directly from Hyperliquid data for the publicly listed buyback
+wallet, from three distinct sources that must not be conflated:
 
-Counterparty roles are matched against addresses already tracked elsewhere in
-this codebase (DEX fee recipients, builders, the KNTQ spot deployer) or
-documented at kinetiq.xyz/docs/khype (10% fee on kHYPE staking rewards, 70%
-buybacks / 30% treasury). Anything that doesn't match a known address is
-reported as "unidentified" rather than guessed — see KNOWN_COUNTERPARTIES for
-which roles are doc-confirmed vs inferred from on-chain flow patterns.
+  1. Funding (userNonFundingLedgerUpdates, transfers in) -- money arriving in
+     the wallet from fee recipients, the kHYPE allocation wallet, etc.
+  2. The actual buybacks (userFillsByTime, spot trade fills on the KNTQ/USDC
+     and KNTQ/USDH pairs) -- when and how much KNTQ was actually purchased on
+     the open market. This is what "buyback activity" means and is spread
+     across most days in varying size, not batched into a handful of spikes.
+  3. Forwarding (userNonFundingLedgerUpdates, transfers out) -- previously
+     bought KNTQ being sent onward to other wallets. This happens in
+     infrequent batches and is NOT when the buyback itself occurred, even
+     though it also involves KNTQ leaving the buyback wallet.
+
+An earlier version of this collector only looked at (1) and (3) and displayed
+(3) as "daily buybacks" -- since forwarding is batched into ~10 transfers
+total, that made real daily buying activity look like a few large spikes.
+
+Counterparty roles for (1)/(3) are matched against addresses already tracked
+elsewhere in this codebase (DEX fee recipients, builders, the KNTQ spot
+deployer) or documented at kinetiq.xyz/docs/khype (10% fee on kHYPE staking
+rewards, 70% buybacks / 30% treasury). Anything that doesn't match a known
+address is reported as "unidentified" rather than guessed -- see
+KNOWN_COUNTERPARTIES for which roles are doc-confirmed vs inferred from
+on-chain flow patterns.
 
 kmHYPE has a separate buyback wallet that is not tracked here yet (its
 address was not available at the time this collector was written).
@@ -75,6 +90,43 @@ def _describe(addr: str) -> dict:
     if meta:
         return {"address": addr, **meta}
     return {"address": addr, "label": None, "category": "unidentified", "confirmed": False}
+
+
+def _kntq_pair_names() -> set[str]:
+    """Spot pair identifiers (e.g. "@334") whose two legs include KNTQ."""
+    meta = hl_post({"type": "spotMeta"}, "spot meta")
+    if not isinstance(meta, dict):
+        return set()
+    tokens = {t["index"]: t.get("name") for t in meta.get("tokens", [])}
+    kntq_indices = {idx for idx, name in tokens.items() if name == "KNTQ"}
+    if not kntq_indices:
+        return set()
+    return {
+        pair["name"]
+        for pair in meta.get("universe", [])
+        if kntq_indices & set(pair.get("tokens", []))
+    }
+
+
+def _fetch_all_fills(wallet: str) -> list:
+    """Paginate userFillsByTime (capped at 2000/page) to get the full history."""
+    all_fills = []
+    seen_tids = set()
+    start_ms = 0
+    for _ in range(100):
+        batch = hl_post(
+            {"type": "userFillsByTime", "user": wallet, "startTime": start_ms, "aggregateByTime": False},
+            "buybacks fills",
+        )
+        if not isinstance(batch, list) or not batch:
+            break
+        new = [f for f in batch if f.get("tid") not in seen_tids]
+        seen_tids.update(f["tid"] for f in new)
+        all_fills.extend(new)
+        if len(batch) < 2000:
+            break
+        start_ms = batch[-1]["time"]
+    return all_fills
 
 
 class BuybacksCollector:
@@ -187,21 +239,55 @@ class BuybacksCollector:
         sources = _build_breakdown(inbound_by_source, inbound_tx_count, total_inbound)
         destinations = _build_breakdown(outbound_by_dest, outbound_tx_count, total_outbound)
 
-        all_dates = sorted(set(daily_inbound) | set(daily_outbound))
-        cum_in = cum_out = 0.0
+        recent.sort(key=lambda r: -r["time"])
+
+        # The actual buybacks: spot trade fills on the KNTQ pairs, not the
+        # batched outbound transfers above. Buys accumulate; any Sell (never
+        # observed so far) nets against them rather than being ignored.
+        kntq_pairs = _kntq_pair_names()
+        fills = _fetch_all_fills(BUYBACK_WALLET) if kntq_pairs else []
+        daily_buy_usd: dict[str, float] = defaultdict(float)
+        daily_buy_kntq: dict[str, float] = defaultdict(float)
+        buy_fill_count = 0
+        total_bought_usd = 0.0
+        total_bought_kntq = 0.0
+        for fill in fills:
+            if fill.get("coin") not in kntq_pairs:
+                continue
+            try:
+                px = float(fill.get("px", 0) or 0)
+                sz = float(fill.get("sz", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            sign = 1 if fill.get("dir") == "Buy" else -1 if fill.get("dir") == "Sell" else 0
+            if sign == 0:
+                continue
+            usd = px * sz * sign
+            date_str = datetime.fromtimestamp(fill.get("time", 0) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            daily_buy_usd[date_str] += usd
+            daily_buy_kntq[date_str] += sz * sign
+            total_bought_usd += usd
+            total_bought_kntq += sz * sign
+            if sign > 0:
+                buy_fill_count += 1
+
+        all_dates = sorted(set(daily_inbound) | set(daily_outbound) | set(daily_buy_usd))
+        cum_in = cum_out = cum_bought = 0.0
         daily_chart = []
         for date_str in all_dates:
             cum_in += daily_inbound.get(date_str, 0)
             cum_out += daily_outbound.get(date_str, 0)
+            cum_bought += daily_buy_usd.get(date_str, 0)
             daily_chart.append({
                 "date": date_str,
                 "inbound_usd": round(daily_inbound.get(date_str, 0), 2),
-                "outbound_usd": round(daily_outbound.get(date_str, 0), 2),
                 "cum_inbound_usd": round(cum_in, 2),
-                "cum_outbound_usd": round(cum_out, 2),
+                "kntq_bought_usd": round(daily_buy_usd.get(date_str, 0), 2),
+                "kntq_bought_amount": round(daily_buy_kntq.get(date_str, 0), 2),
+                "cum_kntq_bought_usd": round(cum_bought, 2),
+                "kntq_forwarded_usd": round(daily_outbound.get(date_str, 0), 2),
+                "cum_kntq_forwarded_usd": round(cum_out, 2),
             })
-
-        recent.sort(key=lambda r: -r["time"])
 
         confirmed_inbound = sum(r["usd"] for r in sources if r["confirmed"])
         unidentified_inbound = total_inbound - confirmed_inbound
@@ -234,16 +320,26 @@ class BuybacksCollector:
             "generated_at": now_str,
             "wallet": BUYBACK_WALLET,
             "methodology": (
-                "Reconstructed from userNonFundingLedgerUpdates for the sKNTQ buyback "
-                "wallet. Counterparty roles are matched against addresses already "
-                "tracked elsewhere in this dashboard (fee recipients, builders, the "
-                "KNTQ spot deployer) or documented at kinetiq.xyz/docs/khype; unmatched "
-                "counterparties are reported as unidentified rather than guessed. "
-                "kmHYPE's separate buyback wallet is not tracked here yet."
+                "Three separate signals, don't confuse them: (1) funding -- money "
+                "arriving in the buyback wallet, from userNonFundingLedgerUpdates; "
+                "(2) actual buybacks -- spot trade fills on the KNTQ/USDC and "
+                "KNTQ/USDH pairs, from userFillsByTime, which is what 'KNTQ Bought' "
+                "and the daily chart reflect; (3) forwarding -- previously-bought "
+                "KNTQ sent onward to other wallets in infrequent batches, which is "
+                "NOT when the buyback happened even though it also moves KNTQ out of "
+                "the wallet. Counterparty roles for (1)/(3) are matched against "
+                "addresses already tracked elsewhere in this dashboard (fee "
+                "recipients, builders, the KNTQ spot deployer) or documented at "
+                "kinetiq.xyz/docs/khype; unmatched counterparties are reported as "
+                "unidentified rather than guessed. kmHYPE's separate buyback wallet "
+                "is not tracked here yet."
             ),
             "totals": {
                 "inbound_usd": round(total_inbound, 2),
-                "outbound_kntq_usd": round(total_outbound, 2),
+                "kntq_bought_usd": round(total_bought_usd, 2),
+                "kntq_bought_amount": round(total_bought_kntq, 2),
+                "kntq_bought_fill_count": buy_fill_count,
+                "kntq_forwarded_usd": round(total_outbound, 2),
                 "held_kntq_amount": held_kntq["amount"] if held_kntq else 0,
                 "held_kntq_cost_basis_usd": held_kntq["cost_basis_usd"] if held_kntq else 0,
                 "confirmed_inbound_usd": round(confirmed_inbound, 2),
@@ -260,6 +356,7 @@ class BuybacksCollector:
         self.last_updated = now_str
         self._save_cache()
         logger.info(
-            f"Buybacks: ${total_inbound:,.0f} in, ${total_outbound:,.0f} KNTQ out "
+            f"Buybacks: ${total_inbound:,.0f} in, ${total_bought_usd:,.0f} KNTQ bought "
+            f"({buy_fill_count} fills), ${total_outbound:,.0f} forwarded onward "
             f"({len(sources)} sources, {len(destinations)} destinations)"
         )

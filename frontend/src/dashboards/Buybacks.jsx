@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  ComposedChart, Bar, Line, PieChart, Pie, Cell,
+  ComposedChart, Bar, Line, Area, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { useApiData } from "../hooks/useApiData";
@@ -160,8 +160,8 @@ export default function BuybacksDashboard() {
       {/* KPIs */}
       <div className="buybacks-kpis" style={{ gap: 10, marginBottom: 20 }}>
         <StatCard label="Total Inbound" value={fmt(totals.inbound_usd)} sub={`${totals.transaction_count} ledger events`} accent={C.cyan} />
-        <StatCard label="KNTQ Bought Back" value={fmt(totals.outbound_kntq_usd)} sub="Sent out of the buyback wallet" accent={C.amber} />
-        <StatCard label="KNTQ Held in Wallet" value={fmt(totals.held_kntq_cost_basis_usd)} sub={totals.held_kntq_amount ? `${Math.round(totals.held_kntq_amount).toLocaleString("en-US")} KNTQ · already bought, not yet forwarded` : "Already bought, not yet forwarded"} accent={C.purple} />
+        <StatCard label="KNTQ Bought" value={fmt(totals.kntq_bought_usd)} sub={totals.kntq_bought_fill_count ? `${totals.kntq_bought_fill_count.toLocaleString("en-US")} buy fills · actual market purchases` : "Actual on-market purchases"} accent={C.amber} />
+        <StatCard label="KNTQ Held in Wallet" value={fmt(totals.held_kntq_cost_basis_usd)} sub={totals.held_kntq_amount ? `${Math.round(totals.held_kntq_amount).toLocaleString("en-US")} KNTQ · bought, not yet forwarded` : "Bought, not yet forwarded"} accent={C.purple} />
         <StatCard label="Confirmed Source Coverage" value={`${totals.confirmed_inbound_pct ?? 0}%`} sub={`${fmt(totals.confirmed_inbound_usd)} matched to known wallets`} accent={C.green} />
       </div>
 
@@ -239,15 +239,18 @@ export default function BuybacksDashboard() {
 
         {tab === "destinations" && (
           <div>
-            <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 6px", fontWeight: 600 }}>KNTQ destinations</h3>
-            <p style={{ color: C.muted, fontSize: 10, margin: "0 0 16px" }}>Where the bought-back KNTQ is sent from the buyback wallet</p>
+            <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 6px", fontWeight: 600 }}>KNTQ forwarding</h3>
+            <p style={{ color: C.muted, fontSize: 10, margin: "0 0 16px" }}>
+              Where previously-bought KNTQ is sent onward from the buyback wallet, in infrequent batches — not when the buyback itself happened. See the Timeline tab for actual daily buy activity.
+            </p>
             <FlowTable rows={destinations} totalLabel="outbound transfers" />
           </div>
         )}
 
         {tab === "timeline" && (
           <div>
-            <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Inbound vs. KNTQ Bought Back</h3>
+            <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 4px", fontWeight: 600 }}>Daily KNTQ Buybacks</h3>
+            <p style={{ color: C.muted, fontSize: 10, margin: "0 0 16px" }}>Actual spot market buy fills on the KNTQ/USDC and KNTQ/USDH pairs — this is when and how much KNTQ was really bought each day</p>
             {dailyChart.length > 0 ? (
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={dailyChart}>
@@ -256,10 +259,10 @@ export default function BuybacksDashboard() {
                   <YAxis yAxisId="d" orientation="left" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <YAxis yAxisId="c" orientation="right" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
-                  <Bar yAxisId="d" dataKey="inbound_usd" name="Daily Inbound" fill={C.cyan} opacity={0.6} radius={[2, 2, 0, 0]} />
-                  <Bar yAxisId="d" dataKey="outbound_usd" name="Daily KNTQ Buyback" fill={C.amber} opacity={0.75} radius={[2, 2, 0, 0]} />
+                  <Area yAxisId="d" type="monotone" dataKey="inbound_usd" name="Daily Inbound" stroke="none" fill={C.cyan} fillOpacity={0.25} />
+                  <Bar yAxisId="d" dataKey="kntq_bought_usd" name="Daily KNTQ Bought" fill={C.amber} opacity={0.85} isAnimationActive={false} />
+                  <Line yAxisId="c" type="monotone" dataKey="cum_kntq_bought_usd" name="Cumulative Bought" stroke={C.amber} strokeWidth={2} dot={false} />
                   <Line yAxisId="c" type="monotone" dataKey="cum_inbound_usd" name="Cumulative Inbound" stroke={C.cyan} strokeWidth={2} dot={false} />
-                  <Line yAxisId="c" type="monotone" dataKey="cum_outbound_usd" name="Cumulative Buyback" stroke={C.amber} strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
