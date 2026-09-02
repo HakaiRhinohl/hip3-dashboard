@@ -47,6 +47,10 @@ const KHYPE_REVENUE = {
   ],
 };
 
+const KHYPE_POLICY_PERIOD_REVENUE = KHYPE_REVENUE.buybacks / 0.70;
+const KHYPE_POLICY_TREASURY = KHYPE_POLICY_PERIOD_REVENUE * 0.30;
+const KHYPE_PRE_POLICY_RETAINED = KHYPE_REVENUE.treasury - KHYPE_POLICY_TREASURY;
+
 const KNTQ_BURN_FLOW = {
   deployer: "0x51172933b60847085e2a959e860e2ec9e240ac09",
   assistanceFund: "0xfefefefefefefefefefefefefefefefefefefefe",
@@ -411,11 +415,11 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   </div>
                 </div>
                 <div style={{ marginTop: 18 }}>
-                  <AllocationBar label="Treasury / retained" value={KHYPE_REVENUE.treasury} total={KHYPE_REVENUE.protocolRevenue} color={C.amber} note="Historical reconstructed destination" />
-                  <AllocationBar label="KNTQ buybacks" value={KHYPE_REVENUE.buybacks} total={KHYPE_REVENUE.protocolRevenue} color={accent} note="Formula-based historical estimate" />
+                  <AllocationBar label="Treasury / retained (lifetime)" value={KHYPE_REVENUE.treasury} total={KHYPE_REVENUE.protocolRevenue} color={C.amber} note={`Includes ~${fmt(KHYPE_PRE_POLICY_RETAINED)} retained before the 70/30 policy`} />
+                  <AllocationBar label="KNTQ buybacks (policy period)" value={KHYPE_REVENUE.buybacks} total={KHYPE_REVENUE.protocolRevenue} color={accent} note="70% of eligible fees since 2026-04-09, not 70% of lifetime revenue" />
                 </div>
                 <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>
-                  Current policy since 2026-04-09: 70% of the performance fee to KNTQ buybacks and 30% to treasury. TVL reference at {KHYPE_REVENUE.tvlAsOf}: {(KHYPE_REVENUE.tvlHype / 1e6).toFixed(1)}M HYPE ({fmt(KHYPE_REVENUE.tvlUsd)}). At {(KHYPE_REVENUE.grossStakingApr * 100).toFixed(2)}% gross APR, implied annual staking rewards are {fmt(KHYPE_REVENUE.tvlUsd * KHYPE_REVENUE.grossStakingApr)}; this is yield, not TVL or protocol revenue.
+                  Since 2026-04-09, eligible performance fees split 70% to KNTQ buybacks and 30% to treasury. Reconstructed policy-period treasury: ~{fmt(KHYPE_POLICY_TREASURY)}. TVL reference at {KHYPE_REVENUE.tvlAsOf}: {(KHYPE_REVENUE.tvlHype / 1e6).toFixed(1)}M HYPE ({fmt(KHYPE_REVENUE.tvlUsd)}). At {(KHYPE_REVENUE.grossStakingApr * 100).toFixed(2)}% gross APR, implied annual staking rewards are {fmt(KHYPE_REVENUE.tvlUsd * KHYPE_REVENUE.grossStakingApr)}; this is yield, not TVL or protocol revenue.
                 </div>
               </div>
 

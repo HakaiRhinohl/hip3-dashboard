@@ -55,7 +55,10 @@ KINETIQ_LST_SNAPSHOT = {
             "effective_from": "2026-04-09",
             "kntq_buybacks_share": 0.70,
             "treasury_share": 0.30,
+            "estimated_eligible_revenue_usd": 791_142.86,
+            "estimated_treasury_allocation_usd": 237_342.86,
         },
+        "estimated_pre_policy_retained_usd": 1_672_657.14,
         "quarterly_revenue_usd": [
             {"quarter": "2025-Q3", "value": 93_000.0, "partial": False},
             {"quarter": "2025-Q4", "value": 1_370_000.0, "partial": False},
@@ -63,7 +66,7 @@ KINETIQ_LST_SNAPSHOT = {
             {"quarter": "2026-Q2", "value": 467_670.0, "partial": False},
             {"quarter": "2026-Q3", "value": 344_680.0, "partial": True},
         ],
-        "methodology_note": "Gross staking rewards are TVL multiplied by gross APR; they are not TVL or protocol revenue.",
+        "methodology_note": "Lifetime treasury includes revenue retained before the 70/30 policy began. Gross staking rewards are TVL multiplied by gross APR; they are not TVL or protocol revenue.",
     },
     "kmhype": {
         "markets_allocation_usd": KINETIQ_ONCHAIN_SNAPSHOT["kmhype_allocation"],
