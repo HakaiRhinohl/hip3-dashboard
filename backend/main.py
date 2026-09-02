@@ -68,21 +68,26 @@ async def run_users():
         logger.error(f"Users collection failed: {e}")
 
 
+async def run_initial_collection():
+    """Refresh caches without blocking FastAPI from serving existing data."""
+    await run_revenue()
+    await run_comparison()
+    await run_liquidity_snapshot()
+    await asyncio.to_thread(users_collector.maybe_start_bootstrap)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run initial data collection, then start scheduler."""
+    """Serve cached data immediately and refresh it in the background."""
     logger.info("Starting initial data collection...")
 
     # Initialize fee accumulator DB (watermark persistence for claim-resistant fee tracking)
     init_fee_db()
 
-    # Run all collectors once at startup
-    await run_revenue()
-    await run_comparison()
-    await run_liquidity_snapshot()
-
-    # Users: start bootstrap in background thread if not complete; otherwise run incremental
-    await asyncio.to_thread(users_collector.maybe_start_bootstrap)
+    # Do not block application startup while slow candle downloads run. Each
+    # collector loads its persisted cache during construction, so endpoints can
+    # serve the last good snapshot immediately.
+    initial_task = asyncio.create_task(run_initial_collection())
 
     # Schedule periodic collection
     scheduler.add_job(run_revenue, "interval", minutes=5, id="revenue")
@@ -97,6 +102,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if not initial_task.done():
+        initial_task.cancel()
+        await asyncio.gather(initial_task, return_exceptions=True)
     scheduler.shutdown()
     logger.info("Scheduler stopped")
 
