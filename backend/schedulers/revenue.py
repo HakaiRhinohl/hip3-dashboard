@@ -231,8 +231,11 @@ class RevenueCollector:
             total_builder += parse_builder_rewards(ref)
 
         if self.dex == "km":
-            deployer_fees = max(deployer_fees, KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"])
-            total_builder = max(total_builder, KINETIQ_ONCHAIN_SNAPSHOT["builder_revenue"])
+            # The referral endpoint is builder-global and includes rewards that
+            # are not attributable to Markets. Use the transaction-level
+            # reconstruction until per-fill DEX attribution is available.
+            deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]
+            total_builder = KINETIQ_ONCHAIN_SNAPSHOT["builder_revenue"]
 
         total_fees = deployer_fees + total_builder
 
