@@ -89,20 +89,29 @@ export default function App() {
   return (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex" }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <style>{`
+        @media (max-width: 680px) {
+          .app-sidebar { width: 52px !important; }
+          .app-main { margin-left: 52px !important; width: calc(100% - 52px) !important; min-width: 0; flex: none !important; }
+          .app-nav-label, .app-sidebar-footer { display: none !important; }
+          .app-nav-button { padding: 7px 16px !important; }
+          .app-logo { padding: 16px 14px !important; }
+        }
+      `}</style>
 
       {/* Sidebar */}
-      <aside style={{
+      <aside className="app-sidebar" style={{
         width: collapsed ? 52 : 210, minHeight: "100vh", background: C.sidebar,
         borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column",
         transition: "width 0.2s ease", position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 100, overflow: "hidden",
       }}>
         {/* Logo */}
-        <div
+        <div className="app-logo"
           style={{ padding: collapsed ? "16px 14px" : "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 52 }}
           onClick={() => setCollapsed(!collapsed)}
         >
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 10px ${C.green}`, flexShrink: 0 }} />
-          {!collapsed && <span style={{ fontFamily: "'IBM Plex Sans'", fontWeight: 700, fontSize: 15, color: C.text, whiteSpace: "nowrap" }}>HIP-3</span>}
+          {!collapsed && <span className="app-nav-label" style={{ fontFamily: "'IBM Plex Sans'", fontWeight: 700, fontSize: 15, color: C.text, whiteSpace: "nowrap" }}>HIP-3</span>}
         </div>
 
         {/* Nav */}
@@ -115,12 +124,12 @@ export default function App() {
                 fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap",
               }}>
                 <span style={{ flexShrink: 0, display: "flex" }}>{section.icon}</span>
-                {!collapsed && section.section}
+                {!collapsed && <span className="app-nav-label">{section.section}</span>}
               </div>
               {section.items.map((item) => {
                 const active = page === item.id;
                 return (
-                  <button key={item.id} onClick={() => setPage(item.id)} style={{
+                  <button className="app-nav-button" key={item.id} onClick={() => setPage(item.id)} style={{
                     display: "flex", alignItems: "center", gap: 10, width: "100%",
                     padding: collapsed ? "7px 16px" : "7px 18px 7px 28px",
                     background: active ? `${item.color}10` : "transparent",
@@ -133,7 +142,7 @@ export default function App() {
                     onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
                   >
                     <div style={{ width: collapsed ? 6 : 4, height: collapsed ? 6 : 4, borderRadius: "50%", background: active ? item.color : C.dimmed, flexShrink: 0 }} />
-                    {!collapsed && item.label}
+                    {!collapsed && <span className="app-nav-label">{item.label}</span>}
                   </button>
                 );
               })}
@@ -142,14 +151,14 @@ export default function App() {
         </nav>
 
         {!collapsed && (
-          <div style={{ padding: "12px 18px", borderTop: `1px solid ${C.border}`, fontSize: 9, color: C.dimmed, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.6 }}>
+          <div className="app-sidebar-footer" style={{ padding: "12px 18px", borderTop: `1px solid ${C.border}`, fontSize: 9, color: C.dimmed, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.6 }}>
             100% on-chain<br />Hyperliquid L1
           </div>
         )}
       </aside>
 
       {/* Main */}
-      <main style={{ flex: 1, marginLeft: collapsed ? 52 : 210, transition: "margin-left 0.2s ease", minHeight: "100vh" }}>
+      <main className="app-main" style={{ flex: 1, marginLeft: collapsed ? 52 : 210, transition: "margin-left 0.2s ease", minHeight: "100vh" }}>
         {renderPage()}
       </main>
     </div>

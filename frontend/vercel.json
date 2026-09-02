@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "http://13.207.60.91:8002/api/:path*"
+      "destination": "http://178.105.226.80:8002/api/:path*"
     }
   ]
 }

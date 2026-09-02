@@ -13,8 +13,8 @@ If it decreased → a claim happened, do NOT subtract (fees were already counted
 
 This way cumulative always grows and survives any number of withdrawals.
 
-For km deployer fees we don't use this (we use vol × known_rate instead, which is more
-accurate), but it is used for xyz, flx, and cash deployer fees.
+The km and mkts namespaces use this pattern independently so the USDH -> USDC
+migration cannot erase or merge withdrawal history.
 """
 
 import logging
@@ -32,11 +32,12 @@ DB_PATH = os.environ.get("FEE_DB_PATH", "/data/fees.db")
 # use the CURRENT clearinghouseState.accountValue directly (no accumulation).
 DEPLOYER_BASELINES: dict[str, float] = {
     "km": 92700.0,  # accountValue before withdrawal on 2026-03-30
+    "mkts": 0.0,    # current USDC deployment, launched after the migration
 }
 
 # DEXes that use the watermark accumulation pattern.
 # All others: just return the current balance directly.
-WATERMARK_DEXES: frozenset[str] = frozenset({"km"})
+WATERMARK_DEXES: frozenset[str] = frozenset({"km", "mkts"})
 
 
 def _get_conn() -> sqlite3.Connection:

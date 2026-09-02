@@ -1,6 +1,10 @@
 """
-Revenue collector — supports km, xyz, flx, cash.
+Revenue collector — supports km/mkts, xyz, flx, cash.
 Fetches candles, on-chain fees, and computes projections per DEX.
+
+The public ``km`` view intentionally joins the legacy USDH deployment (km) and
+the current USDC deployment (mkts). Kinetiq changed the namespace during the
+June 2026 migration, but both deployments belong to the same revenue history.
 """
 
 import json
@@ -17,14 +21,32 @@ from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 logger = logging.getLogger("kinetiq.revenue")
 
 LAUNCH_MS = int(datetime(2025, 11, 1).timestamp() * 1000)
+KINETIQ_MIGRATION_DATE = "2026-06-20"
+
+# Audited on-chain snapshot. These are floors, not hard-coded totals: live
+# cumulative balances can move the dashboard above them, but never erase the
+# history already reconstructed from transactions and fee-recipient flows.
+KINETIQ_ONCHAIN_SNAPSHOT = {
+    "as_of": "2026-09-02",
+    "user_fees": 924_520.0,
+    "hip3_fees": 728_060.0,
+    "deployer_revenue": 338_960.0,
+    "builder_revenue": 196_450.0,
+    "protocol_revenue": 535_410.0,
+    "kmhype_allocation": 33_900.0,
+    "minimum_kntq_buybacks": 230_300.0,
+    "operations_reinvestment": 271_200.0,
+}
 
 # On-chain addresses per DEX
 DEX_CONFIG = {
     "km": {
         "fee_recipient": "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2",
-        "builders": [
-            "0x42f3226007290b02c5a0b15bccbb1ba6df04f992",  # trading
-            "0x4ec89c1c70ca1e2f224bb43e28d122f4d2b4e8bb",  # staking
+        # The staking builder is deliberately excluded from Markets revenue.
+        "builders": ["0x42f3226007290b02c5a0b15bccbb1ba6df04f992"],
+        "dex_sources": [
+            {"dex": "km", "quote": "USDH", "era": "legacy"},
+            {"dex": "mkts", "quote": "USDC", "era": "current"},
         ],
         "growth_discount": 0.10,
     },
@@ -104,25 +126,42 @@ class RevenueCollector:
         logger.info(f"Starting revenue collection for {self.dex}...")
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-        # Step 1: Get tickers
-        dex_limits = hl_post({"type": "perpDexLimits", "dex": self.dex}, f"limits {self.dex}")
-        if not dex_limits:
-            logger.error(f"Failed to get perpDexLimits for {self.dex}")
+        # Step 1: Get tickers. Kinetiq spans two DEX namespaces after its
+        # USDH -> USDC migration, while every other venue has one source.
+        source_configs = self.cfg.get(
+            "dex_sources",
+            [{"dex": self.dex, "quote": None, "era": "current"}],
+        )
+        markets = []
+        for source in source_configs:
+            source_dex = source["dex"]
+            dex_limits = hl_post(
+                {"type": "perpDexLimits", "dex": source_dex},
+                f"limits {source_dex}",
+            )
+            if not dex_limits:
+                logger.warning(f"Failed to get perpDexLimits for {source_dex}")
+                continue
+            for pair in dex_limits.get("coinToOiCap", []):
+                if isinstance(pair, list) and len(pair) == 2:
+                    markets.append({**source, "ticker": pair[0]})
+
+        if not markets:
+            logger.error(f"Failed to discover tickers for {self.dex}")
             return
 
-        tickers = []
-        for pair in dex_limits.get("coinToOiCap", []):
-            if isinstance(pair, list) and len(pair) == 2:
-                tickers.append(pair[0])
-
-        logger.info(f"{self.dex}: found {len(tickers)} tickers")
+        logger.info(f"{self.dex}: found {len(markets)} tickers across {len(source_configs)} source(s)")
 
         # Step 2: Download candles
-        prefix = f"{self.dex}:"
         candles_by_ticker = {}
-        for ticker in tickers:
+        market_meta = {}
+        for market in markets:
+            ticker = market["ticker"]
+            source_dex = market["dex"]
+            prefix = f"{source_dex}:"
             short = ticker.replace(prefix, "")
-            for coin_name, pdex in [(ticker, self.dex), (short, self.dex), (ticker, None), (short, None)]:
+            market_key = f"{source_dex}|{ticker}"
+            for coin_name, pdex in [(ticker, source_dex), (short, source_dex), (ticker, None), (short, None)]:
                 raw = _try_candle_download(coin_name, pdex)
                 if raw:
                     rows = []
@@ -132,19 +171,24 @@ class RevenueCollector:
                         v = float(c.get("v", "0"))
                         vol_usd = v * c_px if c_px > 0 else 0
                         date_str = datetime.fromtimestamp(t_ms / 1000).strftime("%Y-%m-%d")
+                        if self.dex == "km":
+                            is_legacy_date = date_str <= KINETIQ_MIGRATION_DATE
+                            if (market["era"] == "legacy") != is_legacy_date:
+                                continue
                         rows.append({"date": date_str, "volume_usd": round(vol_usd, 2)})
-                    candles_by_ticker[ticker] = rows
+                    candles_by_ticker[market_key] = rows
+                    market_meta[market_key] = {**market, "short": short}
                     break
                 time.sleep(0.1)
 
         # Step 3: Aggregate volume
         daily_vol, vol_by_ticker = {}, {}
-        for ticker, rows in candles_by_ticker.items():
+        for market_key, rows in candles_by_ticker.items():
             ticker_total = 0
             for row in rows:
                 daily_vol[row["date"]] = daily_vol.get(row["date"], 0) + row["volume_usd"]
                 ticker_total += row["volume_usd"]
-            vol_by_ticker[ticker] = ticker_total
+            vol_by_ticker[market_key] = ticker_total
 
         total_cum_vol = sum(daily_vol.values())
         num_days = len(daily_vol)
@@ -165,12 +209,15 @@ class RevenueCollector:
         # Step 4: On-chain fees
         # Deployer fees: clearinghouseState.accountValue is the CURRENT unclaimed balance.
         # Use watermark to accumulate across withdrawal events.
-        ch = hl_post(
-            {"type": "clearinghouseState", "user": self.cfg["fee_recipient"], "dex": self.dex},
-            f"CH {self.dex}",
-        )
-        deployer_balance = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
-        deployer_fees = update_deployer_cumulative(self.dex, deployer_balance)
+        deployer_fees = 0.0
+        for source in source_configs:
+            source_dex = source["dex"]
+            ch = hl_post(
+                {"type": "clearinghouseState", "user": self.cfg["fee_recipient"], "dex": source_dex},
+                f"CH {source_dex}",
+            )
+            deployer_balance = float(ch.get("marginSummary", {}).get("accountValue", "0")) if ch else 0
+            deployer_fees += update_deployer_cumulative(source_dex, deployer_balance)
 
         # Builder fees: referral.tokenToState[x].builderRewards is already CUMULATIVE
         # (claimedRewards + unclaimedRewards). Sum ALL token types (USDC, USDH, USDE, USDT0).
@@ -182,6 +229,10 @@ class RevenueCollector:
             queried.add(addr)
             ref = hl_post({"type": "referral", "user": addr}, f"ref {addr[:8]}")
             total_builder += parse_builder_rewards(ref)
+
+        if self.dex == "km":
+            deployer_fees = max(deployer_fees, KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"])
+            total_builder = max(total_builder, KINETIQ_ONCHAIN_SNAPSHOT["builder_revenue"])
 
         total_fees = deployer_fees + total_builder
 
@@ -207,8 +258,12 @@ class RevenueCollector:
             total_fees = deployer_fees + total_builder
 
         # Step 5: Net deposit
-        dex_status = hl_post({"type": "perpDexStatus", "dex": self.dex}, f"status {self.dex}")
-        total_net_deposit = float(dex_status.get("totalNetDeposit", "0")) if dex_status else 0
+        total_net_deposit = 0.0
+        for source in source_configs:
+            source_dex = source["dex"]
+            dex_status = hl_post({"type": "perpDexStatus", "dex": source_dex}, f"status {source_dex}")
+            if dex_status:
+                total_net_deposit += float(dex_status.get("totalNetDeposit", "0"))
 
         # Build daily chart
         cum = 0
@@ -228,6 +283,7 @@ class RevenueCollector:
                 "builder_fee": round(bf, 2),
                 "total_fee_growth": round(fg + bf, 2),
                 "total_fee_normal": round(fn + bf, 2),
+                "era": "legacy" if self.dex == "km" and date <= KINETIQ_MIGRATION_DATE else "current",
             })
 
         # Projections
@@ -247,16 +303,23 @@ class RevenueCollector:
 
         # Ticker chart
         sorted_tickers = sorted(vol_by_ticker.items(), key=lambda x: -x[1])
-        ticker_chart = [
-            {"ticker": t.replace(prefix, ""), "volume": round(v), "pct": round(v / total_cum_vol * 100, 1) if total_cum_vol > 0 else 0}
-            for t, v in sorted_tickers
-        ]
+        ticker_chart = []
+        for market_key, volume in sorted_tickers:
+            meta = market_meta.get(market_key, {})
+            ticker_chart.append({
+                "ticker": meta.get("short", market_key.split("|")[-1]),
+                "venue": meta.get("dex", self.dex),
+                "quote": meta.get("quote"),
+                "era": meta.get("era", "current"),
+                "volume": round(volume),
+                "pct": round(volume / total_cum_vol * 100, 1) if total_cum_vol > 0 else 0,
+            })
 
         self.data = {
             "dex": self.dex,
             "generated_at": now_str,
             "days_since_launch": days_since_launch,
-            "num_tickers": len(tickers),
+            "num_tickers": len(markets),
             "total_volume": round(total_cum_vol),
             "total_net_deposit": round(total_net_deposit, 2),
             "fees": {
@@ -274,6 +337,13 @@ class RevenueCollector:
             "daily_chart": daily_chart,
             "ticker_chart": ticker_chart,
         }
+        if self.dex == "km":
+            self.data["migration"] = {
+                "cutoff": KINETIQ_MIGRATION_DATE,
+                "legacy": {"dex": "km", "quote": "USDH", "last_day": "2026-06-20"},
+                "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
+            }
+            self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
         self.last_updated = now_str
         self._save_cache()
         logger.info(f"{self.dex} revenue: ${total_cum_vol:,.0f} vol, ${total_fees:,.2f} fees")

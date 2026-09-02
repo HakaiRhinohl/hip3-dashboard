@@ -8,7 +8,7 @@ import { useApiData } from "../hooks/useApiData";
 import { Loading, ErrorState } from "../components/States";
 
 const DEX_META = {
-  km: { name: "Markets by Kinetiq", short: "Kinetiq", color: "#00e5a0" },
+  km: { name: "Kinetiq Markets", short: "Kinetiq", color: "#00e5a0" },
   xyz: { name: "Trade.xyz", short: "Trade.xyz", color: "#7c5cfc" },
   flx: { name: "Felix", short: "Felix", color: "#ff4d6a" },
   cash: { name: "Dreamcash", short: "Dreamcash", color: "#ffb020" },
@@ -16,6 +16,41 @@ const DEX_META = {
 
 // km normal-mode rate (hypothetical — what km would earn if growth mode were disabled)
 const KM_NORMAL_BPS = 4.0743;
+const MIGRATION_DATE = "2026-06-20";
+
+const KINETIQ_ONCHAIN_FALLBACK = {
+  as_of: "2026-09-02",
+  user_fees: 924520,
+  hip3_fees: 728060,
+  deployer_revenue: 338960,
+  builder_revenue: 196450,
+  protocol_revenue: 535410,
+  kmhype_allocation: 33900,
+  minimum_kntq_buybacks: 230300,
+  operations_reinvestment: 271200,
+};
+
+const KHYPE_REVENUE = {
+  protocolRevenue: 2466790,
+  grossStakingYield: 26610000,
+  treasury: 1910000,
+  buybacks: 553800,
+  quarters: [
+    { label: "Q3 '25", value: 93000 },
+    { label: "Q4 '25", value: 1370000 },
+    { label: "Q1 '26", value: 191440 },
+    { label: "Q2 '26", value: 467670 },
+    { label: "Q3 '26*", value: 344680 },
+  ],
+};
+
+const WALLETS = [
+  { role: "Markets fee recipient", address: "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2" },
+  { role: "Markets builder", address: "0x42f3226007290b02c5a0b15bccbb1ba6df04f992" },
+  { role: "kmHYPE StakingManager", address: "0x71f0019cc7fa79e4f42587fb7b9a817d8d2429ec" },
+  { role: "sKNTQ buybacks", address: "0xaa3b7392052d62928cc87701e3ca6fb6630bb6e2" },
+  { role: "kHYPE treasury", address: "0x64bD77698Ab7C3Fd0a1F54497b228ED7a02098E3" },
+];
 
 const fmt = (n) => {
   if (n == null || isNaN(n)) return "—";
@@ -56,6 +91,31 @@ function StatCard({ label, value, sub, accent }) {
   );
 }
 
+function AllocationBar({ label, value, total, color, note }) {
+  const width = total > 0 ? Math.min(100, (value / total) * 100) : 0;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6, fontSize: 10 }}>
+        <span style={{ color: C.text }}>{label}</span>
+        <span style={{ color }}>{fmt(value)}</span>
+      </div>
+      <div style={{ height: 6, background: C.bg, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ width: `${width}%`, height: "100%", background: color, borderRadius: 10 }} />
+      </div>
+      {note && <div style={{ color: C.muted, fontSize: 9, marginTop: 5 }}>{note}</div>}
+    </div>
+  );
+}
+
+function WalletRow({ role, address }) {
+  return (
+    <div className="wallet-row" style={{ padding: "9px 0", borderBottom: `1px solid ${C.border}`, display: "grid", gridTemplateColumns: "160px 1fr", gap: 12, fontSize: 10 }}>
+      <span style={{ color: C.muted }}>{role}</span>
+      <span style={{ color: C.text, overflowWrap: "anywhere" }}>{address}</span>
+    </div>
+  );
+}
+
 export default function RevenueDashboard({ dexId = "km" }) {
   const { data: revData, loading: revLoading, error: revError, refetch: revRefetch } =
     useApiData(`/api/revenue?dex=${dexId}`);
@@ -64,6 +124,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const meta = DEX_META[dexId] || DEX_META.km;
   const accent = meta.color;
+  const isKm = dexId === "km";
 
   const dexData = useMemo(() => {
     if (!revData || revData.status === "loading") return null;
@@ -86,10 +147,22 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const chartData = useMemo(() => {
     if (!revData?.daily_chart) return [];
-    return revData.daily_chart.map((d) => ({ ...d, dt: d.date.slice(5) }));
-  }, [revData]);
-
-  const isKm = dexId === "km";
+    const rows = revData.daily_chart.map((d) => ({ ...d }));
+    if (isKm && !rows.some((d) => d.date === MIGRATION_DATE)) {
+      const previous = [...rows].reverse().find((d) => d.date < MIGRATION_DATE);
+      rows.push({
+        date: MIGRATION_DATE,
+        daily_volume_usd: 0,
+        cum_volume_usd: previous?.cum_volume_usd || 0,
+        deployer_fee_growth: 0,
+        builder_fee: 0,
+        total_fee_growth: 0,
+        era: "legacy",
+      });
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+    }
+    return rows;
+  }, [revData, isKm]);
 
   const feeChartData = useMemo(() => {
     let cum = 0;
@@ -139,37 +212,71 @@ export default function RevenueDashboard({ dexId = "km" }) {
     { name: "Builder Fees", value: fees.builder, color: C.purple },
   ].filter((p) => p.value > 0);
 
-  const tickerData = d.top_tickers || [];
+  const tickerData = (d.top_tickers || []).map((ticker) => ({
+    ...ticker,
+    displayTicker: isKm && ticker.quote ? `${ticker.ticker} · ${ticker.quote}` : ticker.ticker,
+  }));
+
+  const reconstruction = revData?.onchain_reconstruction || KINETIQ_ONCHAIN_FALLBACK;
+  const migration = revData?.migration || {
+    cutoff: MIGRATION_DATE,
+    legacy: { dex: "km", quote: "USDH", last_day: MIGRATION_DATE },
+    current: { dex: "mkts", quote: "USDC", first_day: "2026-06-21" },
+  };
 
   const tabs = [
     { id: "revenue", label: "Revenue" },
+    ...(isKm ? [{ id: "lst", label: "LST Revenue" }] : []),
     { id: "volume", label: "Volume" },
     { id: "breakdown", label: "Breakdown" },
     { id: "tickers", label: "Tickers" },
   ];
 
   return (
-    <div style={{ background: C.bg, color: C.text, minHeight: "100vh", fontFamily: "'IBM Plex Mono', monospace", padding: "20px 24px" }}>
+    <div className="revenue-page" style={{ background: C.bg, color: C.text, minHeight: "100vh", fontFamily: "'IBM Plex Mono', monospace", padding: "20px 24px" }}>
+      <style>{`
+        .revenue-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+        .migration-grid { display: grid; grid-template-columns: 1fr auto 1fr; }
+        .lst-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .lst-bottom-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; }
+        @media (max-width: 1050px) {
+          .revenue-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .lst-grid, .lst-bottom-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 680px) {
+          .revenue-page { padding: 14px 12px !important; }
+          .revenue-kpis { grid-template-columns: 1fr; }
+          .migration-grid { grid-template-columns: 1fr !important; }
+          .migration-arrow { min-width: 0 !important; flex-direction: row !important; gap: 8px; }
+          .migration-current { text-align: left !important; }
+          .revenue-header { flex-wrap: wrap; gap: 10px; }
+          .revenue-tabs { overflow-x: auto; }
+          .revenue-tabs button { padding: 8px 11px !important; white-space: nowrap; }
+          .revenue-content { padding: 14px !important; }
+          .wallet-row { grid-template-columns: 1fr !important; gap: 4px !important; }
+          .breakdown-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
       {/* Header */}
-      <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="revenue-header" style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: accent, boxShadow: `0 0 12px ${accent}` }} />
             <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>{meta.name}</h1>
           </div>
           <p style={{ color: C.muted, fontSize: 11, margin: "4px 0 0 18px" }}>
-            Revenue Analysis — 100% on-chain — updated {revData?.generated_at || "..."}
+            Revenue Analysis · on-chain primary · updated {revData?.generated_at || "..."}
           </p>
         </div>
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 12px", fontSize: 10, color: C.muted }}>
-          {d.num_tickers} tickers · {d.num_days} days
+        <div style={{ background: `${accent}0d`, border: `1px solid ${accent}44`, borderRadius: 6, padding: "6px 12px", fontSize: 10, color: accent }}>
+          {isKm ? "ON-CHAIN RECONSTRUCTION" : `${d.num_tickers} tickers · ${d.num_days} days`}
         </div>
       </div>
 
       {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 20 }}>
+      <div className="revenue-kpis" style={{ gap: 10, marginBottom: 20 }}>
         <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day (7d avg)`} accent={C.cyan} />
-        <StatCard label="Total Fees" value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
+        <StatCard label={isKm ? "Protocol Revenue" : "Total Fees"} value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
         <StatCard label={isKm ? "Effective Rate (Growth)" : "Effective Rate"} value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={normalBps > 0 ? `${normalBps.toFixed(2)} bps normal mode` : isKm ? "No data" : "Deployer + builder"} accent={accent} />
         <StatCard label="Ann. Revenue" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · avg since launch` : ""} accent={accent} />
         {isKm ? (
@@ -179,8 +286,47 @@ export default function RevenueDashboard({ dexId = "km" }) {
         )}
       </div>
 
+      {isKm && (
+        <>
+          <div className="migration-grid" style={{ gap: 14, alignItems: "stretch", background: "linear-gradient(110deg, #10172a, #0b1020)", border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 16, marginBottom: 12 }}>
+            <div>
+              <div style={{ color: C.muted, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Legacy era</div>
+              <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 17, fontWeight: 700, marginTop: 4 }}>km · USDH</div>
+              <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>22 markets settled · through {migration.legacy.last_day}</div>
+            </div>
+            <div className="migration-arrow" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.amber, minWidth: 140 }}>
+              <div style={{ fontSize: 9, letterSpacing: "0.08em" }}>MIGRATION</div>
+              <div style={{ fontSize: 22, lineHeight: 1 }}>→</div>
+              <div style={{ fontSize: 10 }}>{migration.cutoff}</div>
+            </div>
+            <div className="migration-current" style={{ textAlign: "right" }}>
+              <div style={{ color: C.muted, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Current era</div>
+              <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 17, fontWeight: 700, marginTop: 4, color: accent }}>mkts · USDC</div>
+              <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>New market set · from {migration.current.first_day}</div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+            {[
+              ["Trader fees", reconstruction.user_fees],
+              ["HIP-3 fees", reconstruction.hip3_fees],
+              ["Captured revenue", reconstruction.protocol_revenue],
+              ["Min. KNTQ buybacks", reconstruction.minimum_kntq_buybacks],
+            ].map(([label, value]) => (
+              <div key={label} style={{ flex: "1 1 160px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 7, padding: "10px 12px" }}>
+                <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>{label}</div>
+                <div style={{ color: label === "Captured revenue" ? accent : C.text, fontSize: 15, fontWeight: 700, marginTop: 3 }}>{fmt(value)}</div>
+              </div>
+            ))}
+            <div style={{ flexBasis: "100%", color: C.muted, fontSize: 9 }}>
+              Audited snapshot {reconstruction.as_of}. DefiLlama is excluded from these totals when it conflicts with transaction-level flows.
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 2, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+      <div className="revenue-tabs" style={{ display: "flex", gap: 2, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {tabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             background: "transparent", color: tab === t.id ? accent : C.muted,
@@ -190,24 +336,25 @@ export default function RevenueDashboard({ dexId = "km" }) {
         ))}
       </div>
 
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, minHeight: 420 }}>
+      <div className="revenue-content" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, minHeight: 420 }}>
         {tab === "revenue" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>Daily Revenue</h3>
-              <div style={{ fontSize: 10, color: C.muted }}>Bars = daily · Line = cumulative</div>
+              <div style={{ fontSize: 10, color: C.muted }}>Bars = allocated daily · Line = cumulative</div>
             </div>
             {feeChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={340}>
                 <ComposedChart data={feeChartData} barGap={1}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.subtle} opacity={0.3} />
-                  <XAxis dataKey="dt" tick={{ fill: C.muted, fontSize: 9 }} tickLine={false} interval={3} />
+                  <XAxis dataKey="date" tickFormatter={(value) => value.slice(5)} tick={{ fill: C.muted, fontSize: 9 }} tickLine={false} interval={3} />
                   <YAxis yAxisId="d" orientation="left" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <YAxis yAxisId="c" orientation="right" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                   <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
                   <Bar yAxisId="d" dataKey="deployer_fee_growth" name="Deployer Fee" fill={accent} stackId="g" opacity={0.85} />
                   {fees.builder > 0 && <Bar yAxisId="d" dataKey="builder_fee" name="Builder Fee" fill={C.cyan} stackId="g" opacity={0.85} radius={[2, 2, 0, 0]} />}
                   <Line yAxisId="c" type="monotone" dataKey="cum_total_g" name="Cumulative" stroke={accent} strokeWidth={2} dot={false} />
+                  {isKm && <ReferenceLine yAxisId="d" x={MIGRATION_DATE} stroke={C.amber} strokeDasharray="4 3" label={{ value: "USDH → USDC", fill: C.amber, fontSize: 9, position: "insideTopRight" }} />}
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
@@ -218,26 +365,105 @@ export default function RevenueDashboard({ dexId = "km" }) {
           </div>
         )}
 
+        {tab === "lst" && isKm && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+              <div>
+                <div style={{ color: accent, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 5 }}>Liquid staking revenue</div>
+                <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 18, margin: 0, fontWeight: 700 }}>kHYPE and kmHYPE are separate flows</h3>
+              </div>
+              <div style={{ color: C.muted, fontSize: 9, maxWidth: 340, textAlign: "right", lineHeight: 1.5 }}>
+                Protocol revenue uses fee-recipient and transaction flows. Gross staking yield is shown only as context and is not counted as revenue.
+              </div>
+            </div>
+
+            <div className="lst-grid" style={{ gap: 14, marginBottom: 14 }}>
+              <div style={{ background: "linear-gradient(145deg, #101b29, #0b1020)", border: `1px solid ${accent}40`, borderRadius: 9, padding: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ color: accent, fontSize: 18, fontWeight: 700 }}>kHYPE</div>
+                    <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>10% performance fee</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>Historical revenue</div>
+                    <div style={{ color: C.text, fontSize: 23, fontWeight: 700 }}>{fmt(KHYPE_REVENUE.protocolRevenue)}</div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 18 }}>
+                  <AllocationBar label="Treasury / retained" value={KHYPE_REVENUE.treasury} total={KHYPE_REVENUE.protocolRevenue} color={C.amber} note="Historical reconstructed destination" />
+                  <AllocationBar label="KNTQ buybacks" value={KHYPE_REVENUE.buybacks} total={KHYPE_REVENUE.protocolRevenue} color={accent} note="Formula-based historical estimate" />
+                </div>
+                <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>
+                  Current policy since 2026-04-09: 70% of the performance fee to KNTQ buybacks and 30% to treasury. Gross staking yield reference: {fmt(KHYPE_REVENUE.grossStakingYield)}.
+                </div>
+              </div>
+
+              <div style={{ background: "linear-gradient(145deg, #171629, #0b1020)", border: `1px solid ${C.purple}55`, borderRadius: 9, padding: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ color: C.purple, fontSize: 18, fontWeight: 700 }}>kmHYPE</div>
+                    <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>Markets-linked LST</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>Markets allocation</div>
+                    <div style={{ color: C.text, fontSize: 23, fontWeight: 700 }}>{fmt(reconstruction.kmhype_allocation)}</div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 18 }}>
+                  <AllocationBar label="kmHYPE share" value={reconstruction.kmhype_allocation} total={reconstruction.deployer_revenue} color={C.purple} note="10% of reconstructed deployer revenue" />
+                  <AllocationBar label="Minimum KNTQ buybacks" value={reconstruction.minimum_kntq_buybacks} total={reconstruction.protocol_revenue} color={accent} note="Builder revenue + a separate 10% deployer allocation" />
+                  <AllocationBar label="Operations / reinvestment" value={reconstruction.operations_reinvestment} total={reconstruction.protocol_revenue} color={C.cyan} note="Residual reconstructed allocation" />
+                </div>
+                <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>
+                  This is not the full Markets revenue. It is the portion attributable to kmHYPE from the deployer flow.
+                </div>
+              </div>
+            </div>
+
+            <div className="lst-bottom-grid" style={{ gap: 14 }}>
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+                <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>kHYPE revenue by quarter</div>
+                {KHYPE_REVENUE.quarters.map((quarter) => (
+                  <div key={quarter.label} style={{ display: "grid", gridTemplateColumns: "62px 1fr 72px", gap: 10, alignItems: "center", marginBottom: 10, fontSize: 10 }}>
+                    <span style={{ color: C.muted }}>{quarter.label}</span>
+                    <div style={{ background: C.card, height: 7, borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ width: `${(quarter.value / 1370000) * 100}%`, height: "100%", background: `linear-gradient(90deg, ${accent}, ${C.cyan})`, borderRadius: 10 }} />
+                    </div>
+                    <span style={{ color: C.text, textAlign: "right" }}>{fmt(quarter.value)}</span>
+                  </div>
+                ))}
+                <div style={{ color: C.muted, fontSize: 9, marginTop: 12 }}>* Q3 2026 partial through the audited snapshot.</div>
+              </div>
+
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+                <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, fontWeight: 600, marginBottom: 5 }}>Observed destinations</div>
+                {WALLETS.map((wallet) => <WalletRow key={wallet.address} {...wallet} />)}
+              </div>
+            </div>
+          </div>
+        )}
+
         {tab === "volume" && (
           <div>
             <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Daily Trading Volume</h3>
             <ResponsiveContainer width="100%" height={340}>
               <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.subtle} opacity={0.3} />
-                <XAxis dataKey="dt" tick={{ fill: C.muted, fontSize: 9 }} tickLine={false} interval={3} />
+                <XAxis dataKey="date" tickFormatter={(value) => value.slice(5)} tick={{ fill: C.muted, fontSize: 9 }} tickLine={false} interval={3} />
                 <YAxis yAxisId="d" orientation="left" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                 <YAxis yAxisId="c" orientation="right" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} tickLine={false} axisLine={false} />
                 <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
                 <Bar yAxisId="d" dataKey="daily_volume_usd" name="Daily Volume" fill={accent} opacity={0.6} radius={[2, 2, 0, 0]} />
                 <Line yAxisId="c" type="monotone" dataKey="cum_volume_usd" name="Cumulative" stroke={C.amber} strokeWidth={2} dot={false} />
                 <ReferenceLine yAxisId="d" y={avg7d} stroke={accent} strokeDasharray="6 3" strokeWidth={1} label={{ value: "7d avg", fill: accent, fontSize: 9, position: "right" }} />
+                {isKm && <ReferenceLine yAxisId="d" x={MIGRATION_DATE} stroke={C.amber} strokeDasharray="4 3" label={{ value: "USDH → USDC", fill: C.amber, fontSize: 9, position: "insideTopRight" }} />}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
         )}
 
         {tab === "breakdown" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div className="breakdown-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
             <div>
               <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Fee Sources</h3>
               {pieData.length > 0 ? (
@@ -303,7 +529,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                 <BarChart data={tickerData} layout="vertical" margin={{ left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.subtle} opacity={0.3} horizontal={false} />
                   <XAxis type="number" tick={{ fill: C.muted, fontSize: 9 }} tickFormatter={fmt} />
-                  <YAxis type="category" dataKey="ticker" tick={{ fill: C.text, fontSize: 10 }} width={100} />
+                  <YAxis type="category" dataKey="displayTicker" tick={{ fill: C.text, fontSize: 10 }} width={125} />
                   <Tooltip formatter={(v) => fmt(v)} />
                   <Bar dataKey="volume" fill={accent} radius={[0, 4, 4, 0]} opacity={0.8}
                     label={{ position: "right", fill: C.muted, fontSize: 9, formatter: (v) => `${((v / d.cum_volume) * 100).toFixed(1)}%` }} />
@@ -319,7 +545,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
       </div>
 
       <div style={{ marginTop: 16, fontSize: 10, color: C.subtle, textAlign: "center" }}>
-        Hyperliquid L1 API · Auto-refresh every 5 min · {revData?.generated_at}
+        Hyperliquid L1 API · Transaction-level reconstruction · Auto-refresh every 5 min · {revData?.generated_at}
       </div>
     </div>
   );
