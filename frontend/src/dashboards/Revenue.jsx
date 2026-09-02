@@ -44,12 +44,21 @@ const KHYPE_REVENUE = {
   ],
 };
 
+const KNTQ_BURN_FLOW = {
+  deployer: "0x51172933b60847085e2a959e860e2ec9e240ac09",
+  assistanceFund: "0xfefefefefefefefefefefefefefefefefefefefe",
+  explorer: "https://hypurrscan.io/address/0x51172933b60847085e2a959e860e2ec9e240ac09#txs",
+  observedTransfers: 40,
+};
+
 const WALLETS = [
   { role: "Markets fee recipient", address: "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2" },
   { role: "Markets builder", address: "0x42f3226007290b02c5a0b15bccbb1ba6df04f992" },
   { role: "kmHYPE StakingManager", address: "0x71f0019cc7fa79e4f42587fb7b9a817d8d2429ec" },
   { role: "sKNTQ buybacks", address: "0xaa3b7392052d62928cc87701e3ca6fb6630bb6e2" },
   { role: "kHYPE treasury", address: "0x64bD77698Ab7C3Fd0a1F54497b228ED7a02098E3" },
+  { role: "KNTQ spot deployer", address: KNTQ_BURN_FLOW.deployer },
+  { role: "Assistance Fund", address: KNTQ_BURN_FLOW.assistanceFund },
 ];
 
 const fmt = (n) => {
@@ -244,7 +253,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
         .lst-bottom-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; }
         @media (max-width: 1050px) {
           .revenue-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .lst-grid, .lst-bottom-grid { grid-template-columns: 1fr; }
+          .lst-grid, .lst-bottom-grid, .burn-flow-grid { grid-template-columns: 1fr !important; }
         }
         @media (max-width: 680px) {
           .revenue-page { padding: 14px 12px !important; }
@@ -257,6 +266,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
           .revenue-tabs button { padding: 8px 11px !important; white-space: nowrap; }
           .revenue-content { padding: 14px !important; }
           .wallet-row { grid-template-columns: 1fr !important; gap: 4px !important; }
+          .burn-wallet-flow { grid-template-columns: 1fr !important; }
           .breakdown-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
@@ -423,6 +433,39 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
             </div>
 
+            <div style={{ background: "linear-gradient(110deg, #172319, #0b1320 58%, #15141d)", border: `1px solid ${accent}55`, borderRadius: 9, padding: 18, marginBottom: 14, position: "relative", overflow: "hidden" }}>
+              <div style={{ position: "absolute", inset: "0 0 auto", height: 2, background: `linear-gradient(90deg, ${accent}, ${C.amber}, transparent)` }} />
+              <div className="burn-flow-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(300px, 0.8fr)", gap: 24, alignItems: "center" }}>
+                <div>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <div style={{ color: accent, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700 }}>Additional KNTQ sink</div>
+                    <div style={{ color: C.amber, background: `${C.amber}14`, border: `1px solid ${C.amber}44`, borderRadius: 20, padding: "3px 8px", fontSize: 8, letterSpacing: "0.08em" }}>NOT INCLUDED IN MARKETS REVENUE</div>
+                  </div>
+                  <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 18, fontWeight: 700, marginBottom: 7 }}>KNTQ spot fees → Assistance Fund burn</div>
+                  <div style={{ color: C.muted, fontSize: 10, lineHeight: 1.65, maxWidth: 720 }}>
+                    KNTQ earned by the token's spot deployer is transferred recurrently to Hyperliquid's Assistance Fund as a KNTQ burn flow. This is separate from Markets protocol revenue and from the sKNTQ buyback wallet.
+                  </div>
+                  <a href={KNTQ_BURN_FLOW.explorer} target="_blank" rel="noreferrer" style={{ display: "inline-block", color: accent, fontSize: 9, marginTop: 10, textDecoration: "none", borderBottom: `1px solid ${accent}66`, paddingBottom: 2 }}>
+                    Verify full deployer history on Hypurrscan ↗
+                  </a>
+                </div>
+                <div style={{ background: `${C.bg}cc`, border: `1px solid ${C.border}`, borderRadius: 7, padding: 13 }}>
+                  <div style={{ color: C.muted, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>{KNTQ_BURN_FLOW.observedTransfers}+ outbound KNTQ transfers verified</div>
+                  <div className="burn-wallet-flow" style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center" }}>
+                    <div>
+                      <div style={{ color: C.muted, fontSize: 8, marginBottom: 4 }}>SPOT DEPLOYER</div>
+                      <div style={{ color: C.text, fontSize: 9, overflowWrap: "anywhere" }}>{KNTQ_BURN_FLOW.deployer}</div>
+                    </div>
+                    <div style={{ color: accent, fontSize: 18 }}>→</div>
+                    <div>
+                      <div style={{ color: C.muted, fontSize: 8, marginBottom: 4 }}>ASSISTANCE FUND</div>
+                      <div style={{ color: C.text, fontSize: 9, overflowWrap: "anywhere" }}>{KNTQ_BURN_FLOW.assistanceFund}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="lst-bottom-grid" style={{ gap: 14 }}>
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
                 <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>kHYPE revenue by quarter</div>
@@ -439,7 +482,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
 
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-                <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, fontWeight: 600, marginBottom: 5 }}>Observed destinations</div>
+                <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, fontWeight: 600, marginBottom: 5 }}>Observed wallets</div>
                 {WALLETS.map((wallet) => <WalletRow key={wallet.address} {...wallet} />)}
               </div>
             </div>
