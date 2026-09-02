@@ -23,6 +23,7 @@ logger = logging.getLogger("kinetiq.revenue")
 LAUNCH_MS = int(datetime(2025, 11, 1).timestamp() * 1000)
 KINETIQ_MIGRATION_DATE = "2026-06-20"
 KINETIQ_NORMAL_DEPLOYER_BPS = 4.0743
+KINETIQ_GROWTH_DEPLOYER_BPS = KINETIQ_NORMAL_DEPLOYER_BPS * 0.10
 
 # Audited on-chain snapshot. These are floors, not hard-coded totals: live
 # cumulative balances can move the dashboard above them, but never erase the
@@ -297,15 +298,21 @@ class RevenueCollector:
                 "era": "legacy" if self.dex == "km" and date <= KINETIQ_MIGRATION_DATE else "current",
             })
 
-        # Projections
-        daily_b = total_builder / days_since_launch
-        ann_b = daily_b * 365
+        # Run-rate projections use recent volume and the current fee schedule.
+        # Builder rewards are only exposed cumulatively by Hyperliquid, so their
+        # observed all-time effective rate is the best available rate proxy.
+        run_rate_deployer_bps = (
+            KINETIQ_GROWTH_DEPLOYER_BPS if self.dex == "km" else eff_deployer_bps
+        )
+        run_rate_builder_bps = eff_builder_bps
+        run_rate_total_bps = run_rate_deployer_bps + run_rate_builder_bps
         projections = {}
         for label, avg_d in [("last_7d", avg_7d), ("last_30d", avg_30d)]:
-            if avg_d > 0 and eff_deployer_bps > 0:
+            if avg_d > 0 and run_rate_deployer_bps > 0:
                 ann_vol = avg_d * 365
-                ann_dg = ann_vol * eff_deployer_bps / 10000
+                ann_dg = ann_vol * run_rate_deployer_bps / 10000
                 ann_dn = ann_vol * normal_deployer_bps / 10000
+                ann_b = ann_vol * run_rate_builder_bps / 10000
                 projections[label] = {
                     "avg_daily_volume": round(avg_d),
                     "growth_mode": {"deployer": round(ann_dg), "builder": round(ann_b), "total": round(ann_dg + ann_b)},
@@ -333,6 +340,10 @@ class RevenueCollector:
             normal_cumulative_revenue / days_since_launch * 365
             if days_since_launch > 0 else 0
         )
+        annualized_revenue_30d = avg_30d * 365 * run_rate_total_bps / 10000
+        annualized_normal_revenue_30d = (
+            avg_30d * 365 * (normal_deployer_bps + run_rate_builder_bps) / 10000
+        )
 
         self.data = {
             "dex": self.dex,
@@ -351,6 +362,9 @@ class RevenueCollector:
                 "eff_deployer_bps_normal": round(normal_deployer_bps, 4),
                 "eff_builder_bps": round(eff_builder_bps, 4),
                 "eff_total_bps": round(effective_total_bps, 4),
+                "run_rate_deployer_bps_30d": round(run_rate_deployer_bps, 4),
+                "run_rate_builder_bps_30d": round(run_rate_builder_bps, 4),
+                "run_rate_total_bps_30d": round(run_rate_total_bps, 4),
             },
             "kpis": {
                 "cumulative_volume": round(total_cum_vol),
@@ -358,6 +372,8 @@ class RevenueCollector:
                 "effective_total_bps": round(effective_total_bps, 4),
                 "annualized_revenue": round(annualized_revenue, 2),
                 "annualized_normal_revenue": round(annualized_normal_revenue, 2),
+                "annualized_revenue_30d": round(annualized_revenue_30d, 2),
+                "annualized_normal_revenue_30d": round(annualized_normal_revenue_30d, 2),
             },
             "averages": {"daily": round(avg_daily), "avg_7d": round(avg_7d), "avg_30d": round(avg_30d)},
             "projections": projections,
@@ -373,9 +389,12 @@ class RevenueCollector:
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
             self.data["methodology"] = {
                 "volume": "Sum of daily candle base volume multiplied by close price across km and mkts",
-                "effective_rate": "Protocol revenue divided by cumulative estimated USD volume",
-                "annualized_revenue": "Attributed protocol revenue divided by elapsed calendar days, multiplied by 365",
-                "normal_mode": f"{KINETIQ_NORMAL_DEPLOYER_BPS} deployer bps plus the realized builder rate",
+                "historical_effective_rate": "Protocol revenue divided by cumulative estimated USD volume",
+                "run_rate_30d": (
+                    f"Trailing 30-day average volume annualized at {KINETIQ_GROWTH_DEPLOYER_BPS:.4f} "
+                    "current growth-mode deployer bps plus the observed builder rate proxy"
+                ),
+                "normal_mode_30d": f"Trailing 30-day average volume at {KINETIQ_NORMAL_DEPLOYER_BPS} deployer bps plus the observed builder rate proxy",
             }
         self.last_updated = now_str
         self._save_cache()

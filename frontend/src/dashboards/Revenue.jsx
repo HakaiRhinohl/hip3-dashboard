@@ -32,9 +32,12 @@ const KINETIQ_ONCHAIN_FALLBACK = {
 
 const KHYPE_REVENUE = {
   protocolRevenue: 2466790,
-  grossStakingYield: 26610000,
   treasury: 1910000,
   buybacks: 553800,
+  tvlHype: 15000000,
+  tvlUsd: 1260000000,
+  grossStakingApr: 0.02112,
+  tvlAsOf: "2026-09-02",
   quarters: [
     { label: "Q3 '25", value: 93000 },
     { label: "Q4 '25", value: 1370000 },
@@ -148,9 +151,14 @@ export default function RevenueDashboard({ dexId = "km" }) {
       eff_deployer_bps: revData.rates?.eff_deployer_bps_growth || 0,
       eff_builder_bps: revData.rates?.eff_builder_bps || 0,
       eff_total_bps: revData.kpis?.effective_total_bps ?? revData.rates?.eff_total_bps ?? ((revData.rates?.eff_deployer_bps_growth || 0) + (revData.rates?.eff_builder_bps || 0)),
+      run_rate_deployer_bps_30d: revData.rates?.run_rate_deployer_bps_30d,
+      run_rate_builder_bps_30d: revData.rates?.run_rate_builder_bps_30d,
+      run_rate_total_bps_30d: revData.rates?.run_rate_total_bps_30d,
       normal_deployer_bps: revData.rates?.eff_deployer_bps_normal || 0,
       annualized_revenue: revData.kpis?.annualized_revenue,
       annualized_normal_revenue: revData.kpis?.annualized_normal_revenue,
+      annualized_revenue_30d: revData.kpis?.annualized_revenue_30d,
+      annualized_normal_revenue_30d: revData.kpis?.annualized_normal_revenue_30d,
       total_net_deposit: revData.total_net_deposit || 0,
       avg_7d: revData.averages?.avg_7d || 0,
       avg_30d: revData.averages?.avg_30d || 0,
@@ -197,19 +205,19 @@ export default function RevenueDashboard({ dexId = "km" }) {
   const fees = { deployer: d.deployer_fees || 0, builder: d.builder_fees || 0, total: d.total_fees || 0 };
   const deployerBps = d.eff_deployer_bps || 0;
   const builderBps = d.eff_builder_bps || 0;
-  const effBps = d.eff_total_bps || deployerBps + builderBps;
   const normalBps = isKm ? (d.normal_deployer_bps || KM_NORMAL_BPS) : 0;
   const avg7d = d.avg_7d || 0;
-  const activeDays = d.num_days || 0;
-
-  // Annualized average since launch, based on realized cumulative fees.
-  const annDeployer = activeDays > 0 ? (fees.deployer / activeDays) * 365 : 0;
-  const annBuilder = activeDays > 0 ? (fees.builder / activeDays) * 365 : 0;
-  const annTotal = d.annualized_revenue ?? (annDeployer + annBuilder);
-  const normalMultiplier = isKm && deployerBps > 0 ? (normalBps / deployerBps) : 0;
-  const fallbackAnnNormal = isKm ? annDeployer * normalMultiplier + annBuilder : 0;
-  const annNormalTotal = isKm ? (d.annualized_normal_revenue ?? fallbackAnnNormal) : 0;
-  const annNormalDeployer = isKm ? Math.max(0, annNormalTotal - annBuilder) : 0;
+  const avg30d = d.avg_30d || 0;
+  const runRateDeployerBps = d.run_rate_deployer_bps_30d ?? (isKm ? KM_NORMAL_BPS * 0.10 : deployerBps);
+  const runRateBuilderBps = d.run_rate_builder_bps_30d ?? builderBps;
+  const effBps30d = d.run_rate_total_bps_30d ?? (runRateDeployerBps + runRateBuilderBps);
+  const annualizedVolume30d = avg30d * 365;
+  const annDeployer = annualizedVolume30d * runRateDeployerBps / 10000;
+  const annBuilder = annualizedVolume30d * runRateBuilderBps / 10000;
+  const annTotal = d.annualized_revenue_30d ?? (annDeployer + annBuilder);
+  const annNormalDeployer = isKm ? annualizedVolume30d * normalBps / 10000 : 0;
+  const fallbackAnnNormal = isKm ? annNormalDeployer + annBuilder : 0;
+  const annNormalTotal = isKm ? (d.annualized_normal_revenue_30d ?? fallbackAnnNormal) : 0;
   const annualizedBreakdown = isKm
     ? [
       { name: "Actual", deployer: annDeployer, builder: annBuilder },
@@ -290,10 +298,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
       <div className="revenue-kpis" style={{ gap: 10, marginBottom: 20 }}>
         <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day · 7d calendar avg`} accent={C.cyan} />
         <StatCard label={isKm ? "Protocol Revenue" : "Total Fees"} value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
-        <StatCard label={isKm ? "Effective Take Rate" : "Effective Rate"} value={effBps > 0 ? `${effBps.toFixed(2)} bps` : "—"} sub={isKm ? `${deployerBps.toFixed(2)} deployer + ${builderBps.toFixed(2)} builder` : "Deployer + builder"} accent={accent} />
-        <StatCard label="Ann. Revenue" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · historical avg` : ""} accent={accent} />
+        <StatCard label={isKm ? "30D Take Rate" : "30D Effective Rate"} value={effBps30d > 0 ? `${effBps30d.toFixed(2)} bps` : "—"} sub={isKm ? `${runRateDeployerBps.toFixed(2)} deployer + ${runRateBuilderBps.toFixed(2)} builder proxy` : "Deployer + builder"} accent={accent} />
+        <StatCard label="Ann. Revenue (30D)" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · 30d volume run-rate` : ""} accent={accent} />
         {isKm ? (
-          <StatCard label="Ann. Revenue (Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · ${normalBps.toFixed(2)} deployer bps` : ""} accent={C.purple} />
+          <StatCard label="Ann. Revenue (30D Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · ${normalBps.toFixed(2)} deployer bps` : ""} accent={C.purple} />
         ) : (
           <StatCard label="Net Deposit" value={fmt(d.total_net_deposit)} sub="Total deposited in DEX" accent={C.purple} />
         )}
@@ -332,7 +340,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
             ))}
             <div style={{ flexBasis: "100%", color: C.muted, fontSize: 9 }}>
-              Audited snapshot {reconstruction.as_of}. Volume = daily base volume × close; take rate = captured revenue ÷ volume; annualization = historical daily average × 365. DefiLlama is excluded when it conflicts with transaction-level flows.
+              Audited snapshot {reconstruction.as_of}. Volume = daily base volume × close. The 30d run-rate annualizes trailing calendar volume at the current growth-mode deployer rate plus the observed builder-rate proxy. DefiLlama is excluded when it conflicts with transaction-level flows.
             </div>
           </div>
         </>
@@ -386,7 +394,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                 <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 18, margin: 0, fontWeight: 700 }}>kHYPE and kmHYPE are separate flows</h3>
               </div>
               <div style={{ color: C.muted, fontSize: 9, maxWidth: 340, textAlign: "right", lineHeight: 1.5 }}>
-                Protocol revenue uses fee-recipient and transaction flows. Gross staking yield is shown only as context and is not counted as revenue.
+                Protocol revenue uses fee-recipient and transaction flows. TVL and gross staking rewards are context only and are not counted as revenue.
               </div>
             </div>
 
@@ -407,7 +415,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   <AllocationBar label="KNTQ buybacks" value={KHYPE_REVENUE.buybacks} total={KHYPE_REVENUE.protocolRevenue} color={accent} note="Formula-based historical estimate" />
                 </div>
                 <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>
-                  Current policy since 2026-04-09: 70% of the performance fee to KNTQ buybacks and 30% to treasury. Gross staking yield reference: {fmt(KHYPE_REVENUE.grossStakingYield)}.
+                  Current policy since 2026-04-09: 70% of the performance fee to KNTQ buybacks and 30% to treasury. TVL reference at {KHYPE_REVENUE.tvlAsOf}: {(KHYPE_REVENUE.tvlHype / 1e6).toFixed(1)}M HYPE ({fmt(KHYPE_REVENUE.tvlUsd)}). At {(KHYPE_REVENUE.grossStakingApr * 100).toFixed(2)}% gross APR, implied annual staking rewards are {fmt(KHYPE_REVENUE.tvlUsd * KHYPE_REVENUE.grossStakingApr)}; this is yield, not TVL or protocol revenue.
                 </div>
               </div>
 
