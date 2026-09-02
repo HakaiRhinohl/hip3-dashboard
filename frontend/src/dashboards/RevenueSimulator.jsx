@@ -10,8 +10,20 @@ const DEX_META = {
   xyz: { name: "Trade.xyz", color: "#7c5cfc" },
   flx: { name: "Felix", color: "#ff4d6a" },
   cash: { name: "Dreamcash", color: "#ffb020" },
+  bench500m: { name: "500M/d Benchmark", color: "#38bdf8" },
 };
 const DEXES = ["km", "xyz", "flx", "cash"];
+
+// Hypothetical volume scenario, not observed data: "what if daily volume were $500M?"
+// Selectable as a volume source (never as a rate source — a benchmark has no fee rate of its own).
+const BENCHMARK_ID = "bench500m";
+const BENCHMARK_VOLUME_USD = 500_000_000;
+const VOLUME_SOURCES = [...DEXES, BENCHMARK_ID];
+
+function volumeSourceData(id, apiData) {
+  if (id === BENCHMARK_ID) return { avg_30d: BENCHMARK_VOLUME_USD, avg_7d: BENCHMARK_VOLUME_USD, isBenchmark: true };
+  return apiData?.dex_summaries?.find((d) => d.dex === id) || null;
+}
 
 const fmt = (n) => {
   if (n == null || isNaN(n)) return "—";
@@ -56,7 +68,7 @@ export default function RevenueSimulator() {
     if (!apiData?.dex_summaries) return null;
 
     const rateData = apiData.dex_summaries.find((d) => d.dex === ratesDex);
-    const volData = apiData.dex_summaries.find((d) => d.dex === volumeDex);
+    const volData = volumeSourceData(volumeDex, apiData);
     if (!rateData || !volData) return null;
 
     const effBps = rateData.eff_deployer_bps || 0;
@@ -91,8 +103,8 @@ export default function RevenueSimulator() {
     const effBps = rateData.eff_deployer_bps || 0;
     const normalBps = effBps > 0 ? effBps / 0.10 : 0;
 
-    return DEXES.map((volDex) => {
-      const volData = apiData.dex_summaries.find((d) => d.dex === volDex);
+    return VOLUME_SOURCES.map((volDex) => {
+      const volData = volumeSourceData(volDex, apiData);
       if (!volData) return null;
       const avg30d = volData.avg_30d || 0;
       return {
@@ -101,6 +113,7 @@ export default function RevenueSimulator() {
         growth: avg30d * 365 * effBps / 10000,
         normal: avg30d * 365 * normalBps / 10000,
         isSelected: volDex === volumeDex,
+        isBenchmark: volDex === BENCHMARK_ID,
       };
     }).filter(Boolean).sort((a, b) => b.normal - a.normal);
   }, [apiData, ratesDex, volumeDex]);
@@ -145,7 +158,7 @@ export default function RevenueSimulator() {
               onChange={(e) => setVolumeDex(e.target.value)}
               style={{ ...selectStyle, borderColor: DEX_META[volumeDex].color + "60", color: DEX_META[volumeDex].color }}
             >
-              {DEXES.map((dx) => (
+              {VOLUME_SOURCES.map((dx) => (
                 <option key={dx} value={dx}>{DEX_META[dx].name}</option>
               ))}
             </select>
@@ -167,7 +180,9 @@ export default function RevenueSimulator() {
               <div style={{ fontSize: 16, fontWeight: 700, color: DEX_META[volumeDex].color }}>
                 {fmt(result.avg30d)}/day
               </div>
-              <div style={{ fontSize: 10, color: P.muted, marginTop: 2 }}>30d avg · {fmt(result.avg7d)}/d 7d avg</div>
+              <div style={{ fontSize: 10, color: P.muted, marginTop: 2 }}>
+                {volumeDex === BENCHMARK_ID ? "Hypothetical flat scenario, not observed volume" : `30d avg · ${fmt(result.avg7d)}/d 7d avg`}
+              </div>
             </div>
             <div style={{ background: P.bg, borderRadius: 8, padding: "14px 16px" }}>
               <div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Growth Mode (ann.)</div>
@@ -195,7 +210,8 @@ export default function RevenueSimulator() {
           {DEX_META[ratesDex].name} rates × all volume sources
         </h3>
         <p style={{ color: P.muted, fontSize: 10, margin: "0 0 16px" }}>
-          Annualized revenue at {result?.effBps?.toFixed(4) || "?"} bps growth / {result?.normalBps?.toFixed(2) || "?"} bps normal
+          Annualized revenue at {result?.effBps?.toFixed(4) || "?"} bps growth / {result?.normalBps?.toFixed(2) || "?"} bps normal ·{" "}
+          <span style={{ color: DEX_META[BENCHMARK_ID].color }}>500M/d Benchmark</span> is a hypothetical scenario, not observed volume
         </p>
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={allCombinations} barCategoryGap="20%">
@@ -219,7 +235,7 @@ export default function RevenueSimulator() {
             <thead>
               <tr style={{ borderBottom: `1px solid ${P.border}` }}>
                 <th style={{ padding: "8px", textAlign: "left", color: P.muted, fontSize: 9, fontWeight: 600 }}>RATES ↓ · VOL →</th>
-                {DEXES.map((vd) => (
+                {VOLUME_SOURCES.map((vd) => (
                   <th key={vd} style={{ padding: "8px", textAlign: "right", color: DEX_META[vd].color, fontSize: 10, fontWeight: 600 }}>
                     {DEX_META[vd].name}
                   </th>
@@ -240,8 +256,8 @@ export default function RevenueSimulator() {
                         ({normalBps > 0 ? normalBps.toFixed(2) : "?"} bps)
                       </span>
                     </td>
-                    {DEXES.map((vd) => {
-                      const volData = apiData?.dex_summaries?.find((d) => d.dex === vd);
+                    {VOLUME_SOURCES.map((vd) => {
+                      const volData = volumeSourceData(vd, apiData);
                       const avg30d = volData?.avg_30d || 0;
                       const rev = avg30d * 365 * normalBps / 10000;
                       const isSelected = rd === ratesDex && vd === volumeDex;
