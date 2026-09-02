@@ -43,10 +43,13 @@ KINETIQ_ONCHAIN_SNAPSHOT = {
 KINETIQ_LST_SNAPSHOT = {
     "as_of": "2026-09-02",
     "khype": {
-        "tvl_hype": 15_000_000.0,
-        "tvl_usd": 1_260_000_000.0,
+        # 17.2M, not DefiLlama's 15M: DefiLlama's kHYPE TVL excludes institutional
+        # LST positions that Kinetiq itself tracks. tvl_usd uses the HYPE mid price
+        # at the time this snapshot was taken (~$81.16).
+        "tvl_hype": 17_200_000.0,
+        "tvl_usd": 1_395_874_600.0,
         "gross_staking_apr": 0.02112,
-        "implied_annual_gross_rewards_usd": 26_611_200.0,
+        "implied_annual_gross_rewards_usd": 29_480_871.55,
         "performance_fee_rate": 0.10,
         "historical_protocol_revenue_usd": 2_466_790.0,
         "historical_treasury_usd": 1_910_000.0,

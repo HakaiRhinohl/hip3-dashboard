@@ -34,8 +34,10 @@ const KHYPE_REVENUE = {
   protocolRevenue: 2466790,
   treasury: 1910000,
   buybacks: 553800,
-  tvlHype: 15000000,
-  tvlUsd: 1260000000,
+  // 17.2M, not DefiLlama's 15M: DefiLlama's kHYPE TVL excludes institutional LST
+  // positions Kinetiq itself tracks. tvlUsd uses the HYPE mid at snapshot time (~$81.16).
+  tvlHype: 17200000,
+  tvlUsd: 1395874600,
   grossStakingApr: 0.02112,
   tvlAsOf: "2026-09-02",
   q4Onchain: {
