@@ -173,7 +173,7 @@ function TimeseriesChart({ title, series, field, yFormatter, dexNames, dexesPres
 // ── Main dashboard ─────────────────────────────────────────────────────────────
 
 export default function LiquidityDashboard() {
-  const [ticker,   setTicker]   = useState("SILVER");
+  const [ticker,   setTicker]   = useState("US500");
   const [deployer, setDeployer] = useState("km");
   const [hours,    setHours]    = useState(4);
 
@@ -231,27 +231,61 @@ export default function LiquidityDashboard() {
 
   const tsDexes = tsData?.series ? Object.keys(tsData.series) : [];
 
+  useEffect(() => {
+    if (!allTickers.length || allTickers.includes(ticker)) return;
+    const fallback = tkByDex.km?.[0] || d?.shared_tickers?.[0] || allTickers[0];
+    setTicker(fallback);
+    const nextDex = DEX_ORDER.find((dex) => (tkByDex[dex] || []).includes(fallback));
+    setDeployer(nextDex || "km");
+  }, [allTickers, d?.shared_tickers, deployer, ticker, tkByDex]);
+
   // ── Early returns AFTER all hooks ─────────────────────────────────────────────
   if (loading && !apiData) return <Loading message="Loading liquidity data…" />;
   if (error   && !apiData) return <ErrorState error={error} onRetry={refetch} />;
   if (apiData?.status === "loading") return <Loading message={apiData.message} />;
 
   return (
-    <div style={{ background:C.bg, color:C.text, minHeight:"100vh", fontFamily:"'IBM Plex Mono', monospace", padding:"20px 24px" }}>
+    <div className="liquidity-page" style={{ background:C.bg, color:C.text, minHeight:"100vh", fontFamily:"'IBM Plex Mono', monospace", padding:"20px 24px" }}>
+      <style>{`
+        .liquidity-main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+        .liquidity-timeseries { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        @media (max-width: 960px) {
+          .liquidity-main { grid-template-columns: 1fr; }
+          .liquidity-side { position: static !important; }
+        }
+        @media (max-width: 680px) {
+          .liquidity-page { padding: 14px 12px !important; }
+          .liquidity-timeseries { grid-template-columns: 1fr; }
+          .liquidity-hours { width: 100%; overflow-x: auto; padding-bottom: 3px; }
+          .liquidity-hours button { flex: 0 0 auto; }
+          .liquidity-card { padding: 14px !important; }
+          .liquidity-table { min-width: 760px; }
+        }
+      `}</style>
 
       {/* Header */}
       <div style={{ marginBottom:16 }}>
         <h1 style={{ fontFamily:"'IBM Plex Sans'", fontSize:22, fontWeight:700, margin:0 }}>HIP-3 Liquidity Analysis</h1>
         <p style={{ color:C.muted, fontSize:11, margin:"4px 0 0" }}>
-          {d?.pairs_monitored} pairs monitored · {d?.total_snapshots} snapshots · {d?.generated_at}
+          {d?.pairs_monitored} active pairs · {d?.pairs_with_data || 0} with data · {d?.sample_count || 0} L2 samples · {d?.generated_at}
         </p>
       </div>
+
+      {d?.markets_migration && (
+        <div style={{ background:"linear-gradient(110deg, #10172a, #0b1020)", border:`1px solid ${C.km}44`, borderRadius:9, padding:"11px 14px", marginBottom:14, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+          <div>
+            <div style={{ color:C.km, fontSize:10, fontWeight:700 }}>Markets liquidity now tracks mkts · USDC</div>
+            <div style={{ color:C.muted, fontSize:9, marginTop:3 }}>Legacy km · USDH books were delisted and are excluded from live liquidity statistics.</div>
+          </div>
+          <div style={{ color:C.muted, fontSize:9 }}>Migration cutoff · {d.markets_migration.cutoff}</div>
+        </div>
+      )}
 
       {/* Controls row 1: time range + ticker search */}
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10, flexWrap:"wrap" }}>
 
         {/* Time range buttons */}
-        <div style={{ display:"flex", gap:4 }}>
+        <div className="liquidity-hours" style={{ display:"flex", gap:4 }}>
           {HOUR_OPTIONS.map(h => (
             <button key={h} onClick={() => setHours(h)} style={{
               background: hours===h ? "#1a2d50" : "transparent",
@@ -297,7 +331,7 @@ export default function LiquidityDashboard() {
               display:"flex", alignItems:"center", gap:7,
             }}>
               <span style={{ width:7, height:7, borderRadius:"50%", background:C[dx], flexShrink:0, opacity: hasPair ? 1 : .4 }} />
-              {dexNames[dx] || dx}
+              {dexNames[dx] || dx}{dx === "km" ? " · mkts/USDC" : ""}
               {dxRow && (
                 <span style={{ fontSize:10, opacity:.65, marginLeft:2 }}>
                   {dxRow.spread.toFixed(2)} bps
@@ -309,13 +343,13 @@ export default function LiquidityDashboard() {
       </div>
 
       {/* Two-column layout */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
+      <div className="liquidity-main" style={{ gap:16, alignItems:"start" }}>
 
         {/* LEFT */}
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
 
           {/* Spread distribution */}
-          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20 }}>
+          <div className="liquidity-card" style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20 }}>
             <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, margin:"0 0 14px", fontWeight:600 }}>
               {ticker} — Spread Distribution&nbsp;<span style={{ color:C.muted, fontWeight:400 }}>({hours}h)</span>
             </h3>
@@ -345,7 +379,7 @@ export default function LiquidityDashboard() {
 
           {/* Depth by distance */}
           {tickerData.length > 0 && (
-            <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20 }}>
+            <div className="liquidity-card" style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20 }}>
               <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, margin:"0 0 14px", fontWeight:600 }}>
                 {ticker} — Depth by Distance&nbsp;<span style={{ color:C.muted, fontWeight:400 }}>({hours}h)</span>
               </h3>
@@ -366,11 +400,11 @@ export default function LiquidityDashboard() {
 
           {/* Full comparison table */}
           {tickerData.length > 0 && (
-            <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20, marginBottom:0 }}>
+            <div className="liquidity-card" style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20, marginBottom:0 }}>
               <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, margin:"0 0 14px", fontWeight:600 }}>
                 {ticker} — Full Comparison&nbsp;<span style={{ color:C.muted, fontWeight:400 }}>({hours}h)</span>
               </h3>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+              <div style={{ overflowX:"auto" }}><table className="liquidity-table" style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
                 <thead><tr style={{ borderBottom:`1px solid ${C.border}` }}>
                   {["Dex","Spread (med)","Spread (p5)","Spread (p95)","Depth ±10bp","Depth ±50bp","Depth ±100bp","Mid Price"].map((h,i) => (
                     <th key={i} style={{ padding:"6px 8px", textAlign:i===0?"left":"right", color:C.muted, fontWeight:600, fontSize:9, textTransform:"uppercase" }}>{h}</th>
@@ -385,6 +419,7 @@ export default function LiquidityDashboard() {
                       <tr key={td.dex} onClick={() => setDeployer(td.dex)} style={{ borderBottom:`1px solid ${C.subtle}`, background:isSel?C[td.dex]+"12":"transparent", cursor:"pointer" }}>
                         <td style={{ padding:"6px 8px", fontWeight:600 }}>
                           <span style={{ color:C[td.dex] }}>●</span> {td.name}
+                          {td.native_ticker && td.native_ticker !== ticker && <span style={{ color:C.muted, fontSize:9 }}> · {td.native_ticker}</span>}
                           {isSel && <span style={{ color:C[td.dex], fontSize:9, marginLeft:6 }}>◀</span>}
                         </td>
                         <td style={{ padding:"6px 8px", textAlign:"right", fontWeight:700, color:isBest?C.km:isWorst?"#ff6b6b":C.text }}>{td.spread.toFixed(2)} bps</td>
@@ -398,14 +433,14 @@ export default function LiquidityDashboard() {
                     );
                   })}
                 </tbody>
-              </table>
+              </table></div>
               <div style={{ marginTop:8, fontSize:9, color:C.muted }}>Row highlighting follows selected deployer above</div>
             </div>
           )}
         </div>
 
         {/* RIGHT: single pair stats panel */}
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20, position:"sticky", top:64 }}>
+        <div className="liquidity-side" style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10, padding:20, position:"sticky", top:64 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
             <span style={{ width:9, height:9, borderRadius:"50%", background:C[deployer], flexShrink:0 }} />
             <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, margin:0, fontWeight:600 }}>
@@ -477,7 +512,7 @@ export default function LiquidityDashboard() {
           )}
 
           <div style={{ marginTop:16, fontSize:9, color:C.subtle, textAlign:"center" }}>
-            {d?.total_snapshots} snapshots · 30s interval
+            {selData?.n || 0} samples in selected window · 30s target interval
           </div>
         </div>
       </div>
@@ -489,7 +524,7 @@ export default function LiquidityDashboard() {
             <h3 style={{ fontFamily:"'IBM Plex Sans'", fontSize:14, fontWeight:600, margin:0 }}>{ticker} — Over Time</h3>
             <span style={{ fontSize:10, color:C.muted }}>last {hours}h · {tsData.bucket_minutes}min buckets</span>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <div className="liquidity-timeseries" style={{ gap:12 }}>
             <TimeseriesChart title="Spread (bps)"        series={tsData.series} field="spread" yFormatter={v=>`${v} bps`} dexNames={dexNames} dexesPresent={tsDexes} />
             <TimeseriesChart title="Depth ±10 bps (USD)" series={tsData.series} field="d10"    yFormatter={fmt}           dexNames={dexNames} dexesPresent={tsDexes} />
             <TimeseriesChart title="Depth ±50 bps (USD)" series={tsData.series} field="d50"    yFormatter={fmt}           dexNames={dexNames} dexesPresent={tsDexes} />
@@ -499,7 +534,7 @@ export default function LiquidityDashboard() {
       )}
 
       <div style={{ marginTop:20, fontSize:9, color:C.subtle, textAlign:"center" }}>
-        L2 snapshots · 30s interval · Hyperliquid API · {d?.generated_at}
+        Active L2 books only · native ticker aliases normalized · 30s target interval · Hyperliquid API · {d?.generated_at}
       </div>
     </div>
   );

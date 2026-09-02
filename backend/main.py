@@ -16,6 +16,7 @@ from schedulers.revenue import RevenueCollector
 from schedulers.comparison import ComparisonCollector
 from schedulers.liquidity import LiquidityCollector
 from schedulers.users import UsersCollector
+from schedulers.buybacks import BuybacksCollector
 from schedulers.fee_db import init_fee_db
 
 logging.basicConfig(
@@ -31,6 +32,7 @@ revenue_collectors = {dex: RevenueCollector(dex) for dex in REVENUE_DEXES}
 comparison_collector = ComparisonCollector()
 liquidity_collector = LiquidityCollector()
 users_collector = UsersCollector()
+buybacks_collector = BuybacksCollector()
 
 scheduler = AsyncIOScheduler()
 
@@ -42,11 +44,16 @@ async def run_revenue():
             logger.info(f"Revenue collection complete ({dex})")
         except Exception as e:
             logger.error(f"Revenue collection failed ({dex}): {e}")
+    await run_comparison()
 
 
 async def run_comparison():
     try:
-        await asyncio.to_thread(comparison_collector.collect)
+        revenue_data = {
+            dex: collector.get_data()
+            for dex, collector in revenue_collectors.items()
+        }
+        await asyncio.to_thread(comparison_collector.collect, revenue_data)
         logger.info("Comparison collection complete")
     except Exception as e:
         logger.error(f"Comparison collection failed: {e}")
@@ -68,11 +75,21 @@ async def run_users():
         logger.error(f"Users collection failed: {e}")
 
 
+async def run_buybacks():
+    try:
+        await asyncio.to_thread(buybacks_collector.collect)
+        logger.info("Buybacks collection complete")
+    except Exception as e:
+        logger.error(f"Buybacks collection failed: {e}")
+
+
 async def run_initial_collection():
     """Refresh caches without blocking FastAPI from serving existing data."""
-    await run_revenue()
+    # Project persisted revenue caches immediately, then refresh upstream data.
     await run_comparison()
+    await run_revenue()
     await run_liquidity_snapshot()
+    await run_buybacks()
     await asyncio.to_thread(users_collector.maybe_start_bootstrap)
 
 
@@ -91,11 +108,12 @@ async def lifespan(app: FastAPI):
 
     # Schedule periodic collection
     scheduler.add_job(run_revenue, "interval", minutes=5, id="revenue")
-    scheduler.add_job(run_comparison, "interval", minutes=5, id="comparison")
     # Liquidity snapshots every 30 seconds
     scheduler.add_job(run_liquidity_snapshot, "interval", seconds=30, id="liquidity")
     # Users incremental update every 6 hours
     scheduler.add_job(run_users, "interval", hours=6, id="users")
+    # Buybacks ledger every 5 minutes
+    scheduler.add_job(run_buybacks, "interval", minutes=5, id="buybacks")
 
     scheduler.start()
     logger.info("Scheduler started")
@@ -138,6 +156,7 @@ def health():
             "comparison": comparison_collector.last_updated,
             "liquidity": liquidity_collector.last_updated,
             "users": users_collector.last_updated,
+            "buybacks": buybacks_collector.last_updated,
         },
     }
 
@@ -161,6 +180,7 @@ def get_snapshot(
             "comparison": comparison_collector.last_updated,
             "liquidity": liquidity_collector.last_updated,
             "users": users_collector.last_updated,
+            "buybacks": buybacks_collector.last_updated,
         },
         "revenue": {
             dex: revenue_collectors[dex].get_data()
@@ -177,6 +197,7 @@ def get_snapshot(
             "top_venues": users_collector.get_top_venues(),
             "type_breakdown": users_collector.get_type_breakdown(),
         },
+        "buybacks": buybacks_collector.get_data(),
         "endpoints": {
             "snapshot": "/api/snapshot",
             "health": "/api/health",
@@ -189,6 +210,7 @@ def get_snapshot(
             "users_timeline": "/api/users/timeline?period=90",
             "users_top_venues": "/api/users/top_venues",
             "users_type_breakdown": "/api/users/type_breakdown",
+            "buybacks": "/api/buybacks",
         },
     }
 
@@ -206,6 +228,12 @@ def get_revenue(dex: str = Query(default="km")):
 def get_comparison():
     """HIP-3 market comparison data (km vs xyz vs flx vs cash)."""
     return comparison_collector.get_data()
+
+
+@app.get("/api/buybacks")
+def get_buybacks():
+    """sKNTQ buyback wallet flows: inbound funding sources and outbound KNTQ destinations."""
+    return buybacks_collector.get_data()
 
 
 @app.get("/api/liquidity")

@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import {
   BarChart, Bar, AreaChart, Area, ComposedChart, Cell,
-  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid,
+  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from "recharts";
 import { useApiData } from "../hooks/useApiData";
 import { Loading, ErrorState } from "../components/States";
@@ -11,12 +11,16 @@ const DEX_NAMES  = { km: "Markets", xyz: "Trade.xyz", flx: "Felix", cash: "Dream
 const P = { bg: "#060911", card: "#0c1020", border: "#151d38", subtle: "#1a2545", text: "#e4eaf3", muted: "#4f5e82" };
 
 const fmt = (n) => {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  n = Number(n);
   if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
 };
 const fS = (n) => {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  n = Number(n);
   if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
   if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(0)}M`;
   if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
@@ -64,6 +68,15 @@ export default function ComparisonDashboard() {
 
   // 7d / 30d volume trends per DEX
   const trends = useMemo(() => {
+    if (apiData?.trends?.length) {
+      return apiData.trends.map((row) => ({
+        dex: row.dex,
+        vol7d: row.volume_7d,
+        vol30d: row.volume_30d,
+        pct7d: row.change_7d_pct,
+        pct30d: row.change_30d_pct,
+      }));
+    }
     const days = apiData?.daily_chart || [];
     const vol = (slice, key) => slice.reduce((s, d) => s + (d[key] || 0), 0);
     return DEXES.map((dex) => {
@@ -100,6 +113,7 @@ export default function ComparisonDashboard() {
   const d = apiData;
   const dexes = d.dex_summaries || [];
   const chart  = d.daily_chart  || [];
+  const migrationDate = d.migration?.cutoff || "2026-06-20";
 
   const sortedTrends = [...trends].sort((a, b) => b.vol7d - a.vol7d);
 
@@ -112,24 +126,41 @@ export default function ComparisonDashboard() {
   ];
 
   return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: "'IBM Plex Mono', monospace", padding: "20px 24px" }}>
+    <div className="comparison-page" style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: "'IBM Plex Mono', monospace", padding: "20px 24px" }}>
+      <style>{`
+        .comparison-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .comparison-tickers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        @media (max-width: 1050px) {
+          .comparison-cards, .comparison-tickers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 680px) {
+          .comparison-page { padding: 14px 12px !important; }
+          .comparison-cards, .comparison-tickers { grid-template-columns: 1fr; }
+          .comparison-tabs { overflow-x: auto; }
+          .comparison-tabs button { white-space: nowrap; padding: 8px 11px !important; }
+          .comparison-content { padding: 14px !important; }
+          .comparison-table { min-width: 720px; }
+        }
+      `}</style>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>HIP-3 Market Comparison</h1>
-        <p style={{ color: P.muted, fontSize: 11, margin: "4px 0 0" }}>Markets vs Trade.xyz vs Felix vs Dreamcash — updated {d.generated_at}</p>
+        <p style={{ color: P.muted, fontSize: 11, margin: "4px 0 0" }}>Canonical Revenue data · Markets vs Trade.xyz vs Felix vs Dreamcash · updated {d.generated_at}</p>
       </div>
 
       {/* Summary cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
+      <div className="comparison-cards" style={{ gap: 10, marginBottom: 20 }}>
         {dexes.map((dx) => (
           <div key={dx.dex} style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 8, padding: "14px 16px", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${DEX_COLORS[dx.dex]}, transparent)` }} />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'IBM Plex Sans'", color: DEX_COLORS[dx.dex] }}>{DEX_NAMES[dx.dex] || dx.name}</span>
-              <span style={{ fontSize: 10, color: P.muted }}>{dx.num_tickers}t · {dx.num_days}d</span>
+              <span style={{ fontSize: 10, color: P.muted }}>
+                {dx.dex === "km" ? `${dx.active_tickers} active · ${dx.num_tickers} hist.` : `${dx.active_tickers || dx.num_tickers} active`} · {dx.num_days}d
+              </span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               <div><div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase" }}>Volume</div><div style={{ fontSize: 15, fontWeight: 700 }}>{fmt(dx.cum_volume)}</div></div>
-              <div><div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase" }}>Fees</div><div style={{ fontSize: 15, fontWeight: 700 }}>{fmt(dx.total_fees)}</div></div>
+              <div><div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase" }}>{dx.fee_coverage?.is_fully_historical ? "Protocol Revenue" : "Observed Fees"}</div><div style={{ fontSize: 15, fontWeight: 700 }}>{fmt(dx.total_fees)}</div></div>
               <div><div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase" }}>Net Deposit</div><div style={{ fontSize: 13, fontWeight: 600 }}>{fmt(dx.total_net_deposit)}</div></div>
               <div><div style={{ color: P.muted, fontSize: 9, textTransform: "uppercase" }}>30d Avg</div><div style={{ fontSize: 13, fontWeight: 600 }}>{fmt(dx.avg_30d)}/d</div></div>
             </div>
@@ -138,7 +169,7 @@ export default function ComparisonDashboard() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 2, marginBottom: 16, borderBottom: `1px solid ${P.border}` }}>
+      <div className="comparison-tabs" style={{ display: "flex", gap: 2, marginBottom: 16, borderBottom: `1px solid ${P.border}` }}>
         {tabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             background: "transparent", color: tab === t.id ? DEX_COLORS.km : P.muted,
@@ -148,7 +179,7 @@ export default function ComparisonDashboard() {
         ))}
       </div>
 
-      <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20, minHeight: 440 }}>
+      <div className="comparison-content" style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20, minHeight: 440 }}>
 
         {/* ── Overview ── */}
         {tab === "overview" && (
@@ -160,6 +191,7 @@ export default function ComparisonDashboard() {
                 <XAxis dataKey="date" tick={{ fill: P.muted, fontSize: 8 }} tickLine={false} interval={10} tickFormatter={(v) => v.slice(5)} />
                 <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickFormatter={fS} tickLine={false} axisLine={false} />
                 <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                <ReferenceLine x={migrationDate} stroke="#ffb020" strokeDasharray="4 3" label={{ value: "km → mkts", fill: "#ffb020", fontSize: 9, position: "insideTopRight" }} />
                 <Area type="monotone" dataKey="xyz_cum"  name="Trade.xyz" stroke={DEX_COLORS.xyz}  fill={DEX_COLORS.xyz  + "20"} strokeWidth={2} />
                 <Area type="monotone" dataKey="cash_cum" name="Dreamcash" stroke={DEX_COLORS.cash} fill={DEX_COLORS.cash + "20"} strokeWidth={2} />
                 <Area type="monotone" dataKey="flx_cum"  name="Felix"     stroke={DEX_COLORS.flx}  fill={DEX_COLORS.flx  + "20"} strokeWidth={2} />
@@ -167,7 +199,7 @@ export default function ComparisonDashboard() {
               </AreaChart>
             </ResponsiveContainer>
             <div style={{ marginTop: 16, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <table className="comparison-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead><tr style={{ borderBottom: `1px solid ${P.border}` }}>
                   {["", "Tickers", "Cum Volume", "Deployer Fees", "Builder", "Net Deposit", "30d Avg/d"].map((h, i) => (
                     <th key={i} style={{ padding: "6px 8px", textAlign: i === 0 ? "left" : "right", color: P.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
@@ -199,6 +231,7 @@ export default function ComparisonDashboard() {
                 <XAxis dataKey="date" tick={{ fill: P.muted, fontSize: 9 }} tickLine={false} interval={3} tickFormatter={(v) => v.slice(5)} />
                 <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickFormatter={fS} tickLine={false} axisLine={false} />
                 <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                <ReferenceLine x={migrationDate} stroke="#ffb020" strokeDasharray="4 3" label={{ value: "USDH → USDC", fill: "#ffb020", fontSize: 9, position: "insideTopRight" }} />
                 <Bar dataKey="xyz_vol"  name="Trade.xyz" fill={DEX_COLORS.xyz}  opacity={0.6} stackId="a" barSize={5} />
                 <Bar dataKey="cash_vol" name="Dreamcash" fill={DEX_COLORS.cash} opacity={0.6} stackId="a" barSize={5} />
                 <Bar dataKey="flx_vol"  name="Felix"     fill={DEX_COLORS.flx}  opacity={0.7} stackId="a" barSize={5} />
@@ -215,7 +248,7 @@ export default function ComparisonDashboard() {
             <p style={{ color: P.muted, fontSize: 10, margin: "0 0 20px" }}>Week-over-week and month-over-month volume change per DEX</p>
 
             {/* Trend table */}
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginBottom: 28 }}>
+            <div style={{ overflowX: "auto" }}><table className="comparison-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginBottom: 28 }}>
               <thead><tr style={{ borderBottom: `1px solid ${P.border}` }}>
                 {["DEX", "Last 7d", "vs prev 7d", "Last 30d", "vs prev 30d"].map((h, i) => (
                   <th key={i} style={{ padding: "8px 12px", textAlign: i === 0 ? "left" : "right", color: P.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
@@ -238,7 +271,7 @@ export default function ComparisonDashboard() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
 
             {/* 7d vs 30d bar chart */}
             <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, margin: "0 0 12px", fontWeight: 600 }}>7d vs 30d Volume</h3>
@@ -271,6 +304,7 @@ export default function ComparisonDashboard() {
                 <XAxis dataKey="date" tick={{ fill: P.muted, fontSize: 8 }} tickLine={false} interval={5} tickFormatter={(v) => v.slice(5)} />
                 <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickFormatter={(v) => `${v.toFixed(0)}%`} tickLine={false} axisLine={false} domain={[0, 100]} />
                 <Tooltip content={<ShareTip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                <ReferenceLine x={migrationDate} stroke="#ffb020" strokeDasharray="4 3" label={{ value: "km → mkts", fill: "#ffb020", fontSize: 9, position: "insideTopRight" }} />
                 <Area type="monotone" dataKey="xyz"  name="Trade.xyz" stroke={DEX_COLORS.xyz}  fill={DEX_COLORS.xyz}  fillOpacity={0.75} stackId="1" />
                 <Area type="monotone" dataKey="cash" name="Dreamcash" stroke={DEX_COLORS.cash} fill={DEX_COLORS.cash} fillOpacity={0.75} stackId="1" />
                 <Area type="monotone" dataKey="flx"  name="Felix"     stroke={DEX_COLORS.flx}  fill={DEX_COLORS.flx}  fillOpacity={0.75} stackId="1" />
@@ -284,7 +318,7 @@ export default function ComparisonDashboard() {
         {tab === "tickers" && (
           <div>
             <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Top Tickers by Volume</h3>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${dexes.length}, 1fr)`, gap: 14 }}>
+            <div className="comparison-tickers" style={{ gap: 14 }}>
               {dexes.map((dx) => {
                 const tks = dx.top_tickers || [];
                 const mx  = tks[0]?.volume || 1;
@@ -294,7 +328,7 @@ export default function ComparisonDashboard() {
                     {tks.map((t, i) => (
                       <div key={i} style={{ marginBottom: 3 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, marginBottom: 1 }}>
-                          <span style={{ color: P.text }}>{t.ticker}</span>
+                          <span style={{ color: P.text }}>{t.ticker}{t.quote ? ` · ${t.quote}` : ""}</span>
                           <span style={{ color: P.muted }}>{fmt(t.volume)} ({t.pct}%)</span>
                         </div>
                         <div style={{ height: 3, background: P.subtle, borderRadius: 2 }}>
@@ -312,7 +346,7 @@ export default function ComparisonDashboard() {
       </div>
 
       <div style={{ marginTop: 14, fontSize: 9, color: P.subtle, textAlign: "center" }}>
-        Hyperliquid L1 API · Auto-refresh every 5 min · {d.generated_at}
+        {d.methodology} · Auto-refresh every 5 min · {d.generated_at}
       </div>
     </div>
   );

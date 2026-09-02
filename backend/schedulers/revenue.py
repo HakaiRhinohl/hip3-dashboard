@@ -193,6 +193,7 @@ class RevenueCollector:
             [{"dex": self.dex, "quote": None, "era": "current"}],
         )
         markets = []
+        source_ticker_counts = {}
         for source in source_configs:
             source_dex = source["dex"]
             dex_limits = hl_post(
@@ -202,9 +203,11 @@ class RevenueCollector:
             if not dex_limits:
                 logger.warning(f"Failed to get perpDexLimits for {source_dex}")
                 continue
+            source_ticker_counts[source_dex] = 0
             for pair in dex_limits.get("coinToOiCap", []):
                 if isinstance(pair, list) and len(pair) == 2:
                     markets.append({**source, "ticker": pair[0]})
+                    source_ticker_counts[source_dex] += 1
 
         if not markets:
             logger.error(f"Failed to discover tickers for {self.dex}")
@@ -407,12 +410,26 @@ class RevenueCollector:
             "generated_at": now_str,
             "days_since_launch": days_since_launch,
             "num_tickers": len(markets),
+            "active_tickers": sum(
+                count for source, count in source_ticker_counts.items()
+                if any(cfg["dex"] == source and cfg.get("era") == "current" for cfg in source_configs)
+            ),
+            "historical_tickers": sum(
+                count for source, count in source_ticker_counts.items()
+                if any(cfg["dex"] == source and cfg.get("era") == "legacy" for cfg in source_configs)
+            ),
+            "source_ticker_counts": source_ticker_counts,
             "total_volume": round(total_cum_vol),
             "total_net_deposit": round(total_net_deposit, 2),
             "fees": {
                 "deployer": round(deployer_fees, 2),
                 "builder": round(total_builder, 2),
                 "total": round(total_fees, 2),
+            },
+            "fee_coverage": {
+                "deployer": "audited cumulative on-chain reconstruction" if self.dex == "km" else "current observable fee-recipient balance",
+                "builder": "audited cumulative on-chain reconstruction" if self.dex == "km" else "cumulative builder rewards",
+                "is_fully_historical": self.dex == "km",
             },
             "rates": {
                 "eff_deployer_bps_growth": round(eff_deployer_bps, 4),

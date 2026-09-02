@@ -153,6 +153,8 @@ export default function RevenueDashboard({ dexId = "km" }) {
     return {
       dex: revData.dex || dexId,
       num_tickers: revData.num_tickers || 0,
+      active_tickers: revData.active_tickers ?? revData.num_tickers ?? 0,
+      historical_tickers: revData.historical_tickers || 0,
       num_days: revData.days_since_launch || 0,
       cum_volume: revData.kpis?.cumulative_volume ?? revData.total_volume ?? 0,
       deployer_fees: revData.fees?.deployer || 0,
@@ -300,16 +302,16 @@ export default function RevenueDashboard({ dexId = "km" }) {
           </p>
         </div>
         <div style={{ background: `${accent}0d`, border: `1px solid ${accent}44`, borderRadius: 6, padding: "6px 12px", fontSize: 10, color: accent }}>
-          {isKm ? "ON-CHAIN RECONSTRUCTION" : `${d.num_tickers} tickers · ${d.num_days} days`}
+          {isKm ? `${d.active_tickers} ACTIVE · ${d.num_tickers} HISTORICAL LISTINGS` : `${d.active_tickers} active tickers · ${d.num_days} days`}
         </div>
       </div>
 
       {/* KPIs */}
       <div className="revenue-kpis" style={{ gap: 10, marginBottom: 20 }}>
         <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day · 7d calendar avg`} accent={C.cyan} />
-        <StatCard label={isKm ? "Protocol Revenue" : "Total Fees"} value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
-        <StatCard label={isKm ? "30D Take Rate" : "30D Effective Rate"} value={effBps30d > 0 ? `${effBps30d.toFixed(2)} bps` : "—"} sub={isKm ? `${runRateDeployerBps.toFixed(2)} deployer + ${runRateBuilderBps.toFixed(2)} builder proxy` : "Deployer + builder"} accent={accent} />
-        <StatCard label="Ann. Revenue (30D)" value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · 30d volume run-rate` : ""} accent={accent} />
+        <StatCard label={isKm ? "Protocol Revenue" : "Observed Fees"} value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
+        <StatCard label={isKm ? "30D Take Rate" : "Observed Rate Proxy"} value={effBps30d > 0 ? `${effBps30d.toFixed(2)} bps` : "—"} sub={isKm ? `${runRateDeployerBps.toFixed(2)} deployer + ${runRateBuilderBps.toFixed(2)} builder proxy` : "Observable deployer balance + cumulative builder"} accent={accent} />
+        <StatCard label={isKm ? "Ann. Revenue (30D)" : "Ann. Fees (30D Proxy)"} value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · 30d volume run-rate` : ""} accent={accent} />
         {isKm ? (
           <StatCard label="Ann. Revenue (30D Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · ${normalBps.toFixed(2)} deployer bps` : ""} accent={C.purple} />
         ) : (
@@ -323,7 +325,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
             <div>
               <div style={{ color: C.muted, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Legacy era</div>
               <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 17, fontWeight: 700, marginTop: 4 }}>km · USDH</div>
-              <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>22 markets settled · through {migration.legacy.last_day}</div>
+              <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>{d.historical_tickers} markets settled · through {migration.legacy.last_day}</div>
             </div>
             <div className="migration-arrow" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.amber, minWidth: 140 }}>
               <div style={{ fontSize: 9, letterSpacing: "0.08em" }}>MIGRATION</div>
@@ -333,7 +335,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
             <div className="migration-current" style={{ textAlign: "right" }}>
               <div style={{ color: C.muted, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Current era</div>
               <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 17, fontWeight: 700, marginTop: 4, color: accent }}>mkts · USDC</div>
-              <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>New market set · from {migration.current.first_day}</div>
+              <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>{d.active_tickers} active markets · from {migration.current.first_day}</div>
             </div>
           </div>
 
@@ -371,8 +373,8 @@ export default function RevenueDashboard({ dexId = "km" }) {
         {tab === "revenue" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>Daily Revenue</h3>
-              <div style={{ fontSize: 10, color: C.muted }}>Bars = allocated daily · Line = cumulative</div>
+              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>Allocated Daily Revenue</h3>
+              <div style={{ fontSize: 10, color: C.muted }}>Volume-weighted estimate · line = cumulative</div>
             </div>
             {feeChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={340}>
@@ -556,7 +558,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
               )}
             </div>
             <div>
-              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>Annualized Revenue (avg since launch)</h3>
+              <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 16px", fontWeight: 600 }}>{isKm ? "Annualized Revenue" : "Annualized Fee Proxy"} (trailing 30d)</h3>
               {annTotal > 0 ? (
                 <>
                   <ResponsiveContainer width="100%" height={200}>
@@ -612,7 +614,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
       </div>
 
       <div style={{ marginTop: 16, fontSize: 10, color: C.subtle, textAlign: "center" }}>
-        Hyperliquid L1 API · Transaction-level reconstruction · Auto-refresh every 5 min · {revData?.generated_at}
+        Hyperliquid L1 API · {revData?.fee_coverage?.is_fully_historical ? "Transaction-level reconstruction" : "Observable fee balance + cumulative builder rewards proxy"} · Auto-refresh every 5 min · {revData?.generated_at}
       </div>
     </div>
   );

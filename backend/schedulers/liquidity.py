@@ -19,10 +19,19 @@ from schedulers import hl_post
 logger = logging.getLogger("kinetiq.liquidity")
 
 DEXES = {
-    "km":   {"name": "Markets",    "prefix": "km"},
-    "xyz":  {"name": "Trade.xyz",  "prefix": "xyz"},
-    "flx":  {"name": "Felix",      "prefix": "flx"},
-    "cash": {"name": "Dreamcash",  "prefix": "cash"},
+    # Keep the public id ``km`` for dashboard/API compatibility, but only query
+    # the active post-migration ``mkts`` USDC deployment for live liquidity.
+    "km":   {"name": "Markets",   "source": "mkts", "prefix": "mkts", "quote": "USDC"},
+    "xyz":  {"name": "Trade.xyz", "source": "xyz",  "prefix": "xyz"},
+    "flx":  {"name": "Felix",     "source": "flx",  "prefix": "flx"},
+    "cash": {"name": "Dreamcash", "source": "cash", "prefix": "cash"},
+}
+
+# Equivalent index products use different native symbols across venues. The
+# API exposes a canonical symbol so these books can actually be compared.
+TICKER_ALIASES = {
+    "US500": {"km": "US500", "xyz": "SP500", "flx": "USA500", "cash": "USA500"},
+    "USTECH": {"km": "USTECH", "xyz": "XYZ100", "flx": "USA100"},
 }
 
 # SQLite path — override via env var for Docker volume mount
@@ -39,9 +48,10 @@ DEFAULT_HRS = 4    # Hours used for the cached self.data
 
 def get_book(coin: str, dex: str) -> dict | None:
     """Fetch L2 orderbook, trying multiple coin/dex format combos."""
+    source = DEXES[dex]["source"]
     prefix = DEXES[dex]["prefix"]
     full   = f"{prefix}:{coin}"
-    for c, p in [(full, dex), (coin, dex), (full, None)]:
+    for c, p in [(full, source), (coin, source), (full, None)]:
         payload = {"type": "l2Book", "coin": c}
         if p:
             payload["perpDex"] = p
@@ -99,6 +109,17 @@ def _pct(lst, p):
     return s[min(idx, len(s) - 1)]
 
 
+def _canonical_ticker(dex: str, native_ticker: str) -> str:
+    for canonical, aliases in TICKER_ALIASES.items():
+        if aliases.get(dex) == native_ticker:
+            return canonical
+    return native_ticker
+
+
+def _native_ticker(dex: str, canonical_ticker: str) -> str:
+    return TICKER_ALIASES.get(canonical_ticker, {}).get(dex, canonical_ticker)
+
+
 # ── Collector ──────────────────────────────────────────────────────────────────
 
 class LiquidityCollector:
@@ -132,6 +153,7 @@ class LiquidityCollector:
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts           INTEGER NOT NULL,
                 dex          TEXT    NOT NULL,
+                source_dex   TEXT,
                 ticker       TEXT    NOT NULL,
                 mid          REAL,
                 spread_bps   REAL,
@@ -140,6 +162,12 @@ class LiquidityCollector:
                 depth_100bps REAL
             )
         """)
+        columns = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
+        if "source_dex" not in columns:
+            db.execute("ALTER TABLE snapshots ADD COLUMN source_dex TEXT")
+        # Existing rows came from the same namespace as their display DEX. This
+        # marks legacy km rows so they can be excluded from current mkts stats.
+        db.execute("UPDATE snapshots SET source_dex = dex WHERE source_dex IS NULL")
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dex_ticker_ts "
             "ON snapshots(dex, ticker, ts)"
@@ -160,8 +188,9 @@ class LiquidityCollector:
         pairs: list[tuple[str, str]] = []
         tickers_by_dex: dict[str, list[str]] = {}
 
-        for dex in DEXES:
-            limits = hl_post({"type": "perpDexLimits", "dex": dex}, f"limits {dex}")
+        for dex, dex_info in DEXES.items():
+            source = dex_info["source"]
+            limits = hl_post({"type": "perpDexLimits", "dex": source}, f"limits {source}")
             if not limits:
                 logger.warning(f"Could not fetch limits for {dex}")
                 continue
@@ -172,7 +201,7 @@ class LiquidityCollector:
                     continue
                 coin = entry[0]   # e.g. "km:SILVER"
                 tkr  = coin.split(":", 1)[1] if ":" in coin else coin
-                tickers.append(tkr)
+                tickers.append(_canonical_ticker(dex, tkr))
                 pairs.append((dex, tkr))
 
             tickers_by_dex[dex] = sorted(set(tickers))
@@ -209,7 +238,7 @@ class LiquidityCollector:
             if not analysis:
                 continue
             rows.append((
-                ts, dex, ticker,
+                ts, dex, DEXES[dex]["source"], ticker,
                 analysis["mid"],
                 analysis["spread_bps"],
                 analysis["depth_10bps"],
@@ -221,9 +250,9 @@ class LiquidityCollector:
         if rows:
             db.executemany(
                 """INSERT INTO snapshots
-                       (ts, dex, ticker, mid, spread_bps,
+                       (ts, dex, source_dex, ticker, mid, spread_bps,
                         depth_10bps, depth_50bps, depth_100bps)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows,
             )
             db.commit()
@@ -251,9 +280,11 @@ class LiquidityCollector:
         if hours is not None:
             where.append("ts >= ?")
             params.append(int(time.time()) - hours * 3_600)
-        if ticker is not None:
-            where.append("ticker = ?")
-            params.append(ticker)
+        source_filters = []
+        for dex, dex_info in DEXES.items():
+            source_filters.append("(dex = ? AND source_dex = ?)")
+            params.extend([dex, dex_info["source"]])
+        where.append("(" + " OR ".join(source_filters) + ")")
 
         sql = (
             "SELECT dex, ticker, spread_bps, depth_10bps, depth_50bps, depth_100bps, mid "
@@ -264,11 +295,15 @@ class LiquidityCollector:
         sql += " ORDER BY ts ASC"
 
         result: dict[tuple, dict[str, list]] = defaultdict(
-            lambda: {"spread": [], "d10": [], "d50": [], "d100": [], "mid": []}
+            lambda: {"spread": [], "d10": [], "d50": [], "d100": [], "mid": [], "native": set()}
         )
         for row in db.execute(sql, params).fetchall():
             dex, tkr, spread, d10, d50, d100, mid = row
-            key = (dex, tkr)
+            canonical = _canonical_ticker(dex, tkr)
+            if ticker is not None and canonical != ticker:
+                continue
+            key = (dex, canonical)
+            result[key]["native"].add(tkr)
             result[key]["spread"].append(spread)
             result[key]["d10"].append(d10)
             result[key]["d50"].append(d50)
@@ -286,6 +321,7 @@ class LiquidityCollector:
             dex_info = DEXES.get(dex_id, {})
             summary.append({
                 "ticker":    ticker,
+                "native_ticker": ", ".join(sorted(vals["native"])),
                 "dex":       dex_id,
                 "name":      dex_info.get("name", dex_id),
                 "n":         len(vals["spread"]),
@@ -326,12 +362,22 @@ class LiquidityCollector:
         return {
             "generated_at":    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "total_snapshots": self.total_snapshots,
+            "sample_count":    sum(item["n"] for item in summary),
+            "pairs_with_data": len(summary),
             "pairs_monitored": len(self.discovered_pairs),
             "hours":           hours,
             "tickers":         all_tickers,
             "shared_tickers":  shared,
             "tickers_by_dex":  self.tickers_by_dex,
             "dex_names":       {k: v["name"] for k, v in DEXES.items()},
+            "source_dexes":    {k: v["source"] for k, v in DEXES.items()},
+            "quotes":          {k: v.get("quote") for k, v in DEXES.items()},
+            "ticker_aliases":  TICKER_ALIASES,
+            "markets_migration": {
+                "legacy": {"dex": "km", "quote": "USDH", "status": "delisted"},
+                "current": {"dex": "mkts", "quote": "USDC", "status": "active"},
+                "cutoff": "2026-06-20",
+            },
             "summary":         summary,
             "spread_all":      cross_ticker("spread"),
             "depth_10_all":    cross_ticker("d10"),
@@ -371,12 +417,17 @@ class LiquidityCollector:
         bucket_min = max(1, int(hours * 60 / 80))
         bucket_sec = bucket_min * 60
 
+        pair_filters = []
+        pair_params = []
+        for dex, dex_info in DEXES.items():
+            pair_filters.append("(dex = ? AND source_dex = ? AND ticker = ?)")
+            pair_params.extend([dex, dex_info["source"], _native_ticker(dex, ticker)])
+
         rows = db.execute(
             """SELECT dex, ts, spread_bps, depth_10bps, depth_50bps, depth_100bps
                FROM snapshots
-               WHERE ticker = ? AND ts >= ?
-               ORDER BY ts ASC""",
-            (ticker, cutoff),
+               WHERE ts >= ? AND (""" + " OR ".join(pair_filters) + ") ORDER BY ts ASC",
+            [cutoff, *pair_params],
         ).fetchall()
 
         # Accumulate into time buckets per DEX
@@ -420,4 +471,6 @@ class LiquidityCollector:
         return {
             "tickers_by_dex": self.tickers_by_dex,
             "all_tickers":    all_tickers,
+            "source_dexes":   {k: v["source"] for k, v in DEXES.items()},
+            "ticker_aliases": TICKER_ALIASES,
         }
