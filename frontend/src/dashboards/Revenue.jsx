@@ -498,7 +498,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                 ))}
                 <div style={{ color: C.muted, fontSize: 9, marginTop: 12 }}>* Q3 2026 partial through the audited snapshot.</div>
                 <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55, marginTop: 10 }}>
-                  Q4 2025 was not staking yield alone. From {KHYPE_REVENUE.q4Onchain.visibleFrom}, the treasury received {KHYPE_REVENUE.q4Onchain.transferEvents.toLocaleString()} visible kHYPE fee-transfer events totaling {KHYPE_REVENUE.q4Onchain.khypeReceived.toLocaleString(undefined, { maximumFractionDigits: 0 })} kHYPE, mainly around unstake flows. TVL also peaked near {fmt(KHYPE_REVENUE.q4Onchain.tvlPeakUsd)} during October before falling through December.
+                  Q4 2025 was not staking yield alone. From {KHYPE_REVENUE.q4Onchain.visibleFrom}, the treasury received {KHYPE_REVENUE.q4Onchain.transferEvents.toLocaleString("en-US")} visible kHYPE fee-transfer events totaling {KHYPE_REVENUE.q4Onchain.khypeReceived.toLocaleString("en-US", { maximumFractionDigits: 0 })} kHYPE, mainly around unstake flows. TVL also peaked near {fmt(KHYPE_REVENUE.q4Onchain.tvlPeakUsd)} during October before falling through December.
                 </div>
               </div>
 
