@@ -17,6 +17,7 @@ from schedulers.comparison import ComparisonCollector
 from schedulers.liquidity import LiquidityCollector
 from schedulers.buybacks import BuybacksCollector
 from schedulers.fee_db import init_fee_db
+from schedulers import reservoir_fees
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,6 +74,21 @@ async def run_buybacks():
         logger.error(f"Buybacks collection failed: {e}")
 
 
+async def run_reservoir():
+    """Pull a bounded slice of unprocessed reservoir partitions.
+
+    Each day is one Requester Pays download, so this runs on its own slow job
+    rather than inside the 5-minute revenue cycle. A cold database backfills
+    over several hours; afterwards there is at most one new day to fetch.
+    """
+    try:
+        result = await asyncio.to_thread(reservoir_fees.ingest)
+        if result["ingested"] or result["failed"]:
+            logger.info(f"Reservoir ingest: {result}")
+    except Exception as e:
+        logger.error(f"Reservoir ingest failed: {e}")
+
+
 async def run_initial_collection():
     """Refresh caches without blocking FastAPI from serving existing data."""
     # Project persisted revenue caches immediately, then refresh upstream data.
@@ -101,6 +117,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_liquidity_snapshot, "interval", seconds=30, id="liquidity")
     # Buybacks ledger every 5 minutes
     scheduler.add_job(run_buybacks, "interval", minutes=5, id="buybacks")
+    # Reservoir partitions land once a day; the cadence here only governs how
+    # fast a cold backfill catches up.
+    scheduler.add_job(run_reservoir, "interval", minutes=20, id="reservoir")
 
     scheduler.start()
     logger.info("Scheduler started")

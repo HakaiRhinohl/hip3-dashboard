@@ -19,6 +19,7 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 from schedulers.lst import fetch_live_lst, merge_with_snapshot
 from schedulers.builder_fees import fetch_builder_revenue
+from schedulers.reservoir_fees import markets_fees
 
 logger = logging.getLogger("kinetiq.revenue")
 
@@ -334,15 +335,26 @@ class RevenueCollector:
             total_builder += parse_builder_rewards(ref)
 
         builder_measured = None
+        reservoir = None
         if self.dex == "km":
-            # Deployer revenue stays on the audited reconstruction: the live
-            # watermark reads ~$9.1M against ~$339K audited, because the fee
-            # recipient's account value moves with more than fee accrual.
-            deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]
-            # Builder revenue does not need a reconstruction. Its effective rate
-            # (2.83 bps of notional on mkts) sits inside Markets' own published
-            # fee schedule, and the dated rewardsClaim history reconciles to the
-            # cumulative exactly, so it is measured rather than estimated.
+            # Deployer revenue: summed per fill from the reservoir when the
+            # backfill has completed, which is exact and scoped to Markets' own
+            # DEX. Until then it falls back to the audited reconstruction -- the
+            # live watermark is unusable, reading ~$9.1M against ~$339K audited
+            # because the fee recipient's account value moves with more than fee
+            # accrual.
+            reservoir = markets_fees(self.cfg["builders"])
+            if reservoir and reservoir.get("complete"):
+                deployer_fees = reservoir["deployer_fee_usd"]
+            else:
+                deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]
+            # Builder revenue stays address-scoped on purpose. Revenue here is
+            # defined as the DEX plus the apps, and a builder code earns on
+            # everything the app routes -- including flow sent to the main
+            # exchange rather than to Markets' own DEX. The reservoir's
+            # `builder_fee_markets_usd` is the on-DEX subset of this same
+            # figure, carried alongside so the split stays visible instead of
+            # the two being confused for each other.
             builder_measured = fetch_builder_revenue(self.cfg["builders"])
             if builder_measured and builder_measured.get("measured"):
                 total_builder = builder_measured["cumulative_usd"]
@@ -506,6 +518,8 @@ class RevenueCollector:
                 "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
             }
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
+            if reservoir:
+                self.data["reservoir_fees"] = reservoir
             if builder_measured:
                 self.data["builder_revenue_measured"] = builder_measured
             # TVL, HYPE price and staking APR are read live from HyperEVM and
