@@ -33,6 +33,8 @@ RPC_TIMEOUT = 15
 
 # selector for totalSupply()
 SEL_TOTAL_SUPPLY = "0x18160ddd"
+# selector for decimals()
+SEL_DECIMALS = "0x313ce567"
 # selector for kHYPEToHYPE(uint256), called with 1e18 to read the rate
 SEL_RATE = "0x759bc2fc" + f"{10**18:064x}"
 
@@ -71,12 +73,9 @@ ECOSYSTEM_LSTS = [
     {"symbol": "vHYPE",    "provider": "Ventuals",   "token": "0x8888888fdaac0e7cf8c6523c8955bf7954c216fa", "note": "winding down since Jun 2026, redeeming for HYPE"},
     {"symbol": "beHYPE",   "provider": "Hyperbeat",  "token": "0xd8fc8f0b03eba61f64d08b0bef69d80916e5dda9", "note": "built with ether.fi"},
     {"symbol": "mHYPE",    "provider": "Hyperpie",   "token": "0xdabb040c428436d41cecd0fb06bcfdbaad3a9aa8", "note": "Magpie SubDAO, rebranded SpinUp"},
-    # Addresses not resolved yet -- left here so the share view can say what it
-    # is missing instead of silently under-reporting the ecosystem total.
-    {"symbol": "iHYPE",    "provider": "Kinetiq",    "token": None, "note": "institutional pool"},
-    {"symbol": "HYPED",    "provider": "Hyperdrive", "token": None, "note": "CoreWriter + precompiles"},
-    {"symbol": "sHYPE",    "provider": "Kintsu",     "token": None},
-    {"symbol": "aHYPE",    "provider": "AlphaTicks", "token": None, "note": "AlphaTicks absorbed by Hfun Labs"},
+    {"symbol": "αHYPE",    "provider": "AlphaTicks", "token": "0xE44bd27c9F10fa2F89fdb3ab4B4F0E460da29EA8", "note": "AlphaTicks absorbed by Hfun Labs"},
+    # Hyperdrive's HYPED and Kintsu's sHYPE are deliberately not tracked: no
+    # address was confirmed for either, and searching by ticker is unsafe here.
 ]
 
 
@@ -100,6 +99,17 @@ def _eth_call(to: str, data: str) -> int | None:
         return int(result, 16)
     except ValueError:
         return None
+
+
+def _token_decimals(token: str) -> int:
+    """
+    A token's decimals, defaulting to 18. Not every LST uses 18 -- AlphaTicks'
+    aHYPE is 8 -- so assuming it would misreport supply by orders of magnitude.
+    """
+    raw = _eth_call(token, SEL_DECIMALS)
+    if raw is None or not 0 <= raw <= 36:
+        return 18
+    return raw
 
 
 def _lst_backing(name: str, token: str, accountant: str) -> dict | None:
@@ -226,7 +236,7 @@ def fetch_ecosystem_share(price: float | None = None) -> dict | None:
             unresolved.append({"symbol": entry["symbol"], "provider": entry["provider"],
                                "reason": "supply unreadable"})
             continue
-        supply = raw / 1e18
+        supply = raw / 10 ** _token_decimals(entry["token"])
         tokens.append({
             "symbol": entry["symbol"],
             "provider": entry["provider"],
