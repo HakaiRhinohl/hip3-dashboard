@@ -1,5 +1,7 @@
 .DS_Store
 .env
+.env.local
+.vercel
 .claude/
 node_modules/
 __pycache__/
