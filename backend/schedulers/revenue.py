@@ -18,6 +18,7 @@ from schedulers import hl_post
 CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 from schedulers.lst import fetch_live_lst, merge_with_snapshot
+from schedulers.builder_fees import fetch_builder_revenue
 
 logger = logging.getLogger("kinetiq.revenue")
 
@@ -321,12 +322,21 @@ class RevenueCollector:
             ref = hl_post({"type": "referral", "user": addr}, f"ref {addr[:8]}")
             total_builder += parse_builder_rewards(ref)
 
+        builder_measured = None
         if self.dex == "km":
-            # The referral endpoint is builder-global and includes rewards that
-            # are not attributable to Markets. Use the transaction-level
-            # reconstruction until per-fill DEX attribution is available.
+            # Deployer revenue stays on the audited reconstruction: the live
+            # watermark reads ~$9.1M against ~$339K audited, because the fee
+            # recipient's account value moves with more than fee accrual.
             deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]
-            total_builder = KINETIQ_ONCHAIN_SNAPSHOT["builder_revenue"]
+            # Builder revenue does not need a reconstruction. Its effective rate
+            # (2.83 bps of notional on mkts) sits inside Markets' own published
+            # fee schedule, and the dated rewardsClaim history reconciles to the
+            # cumulative exactly, so it is measured rather than estimated.
+            builder_measured = fetch_builder_revenue(self.cfg["builders"])
+            if builder_measured and builder_measured.get("measured"):
+                total_builder = builder_measured["cumulative_usd"]
+            else:
+                total_builder = KINETIQ_ONCHAIN_SNAPSHOT["builder_revenue"]
 
         total_fees = deployer_fees + total_builder
 
@@ -377,12 +387,18 @@ class RevenueCollector:
             })
 
         # Run-rate projections use recent volume and the current fee schedule.
-        # Builder rewards are only exposed cumulatively by Hyperliquid, so their
-        # observed all-time effective rate is the best available rate proxy.
         run_rate_deployer_bps = (
             KINETIQ_GROWTH_DEPLOYER_BPS if self.dex == "km" else eff_deployer_bps
         )
-        run_rate_builder_bps = eff_builder_bps
+        # Where the builder's claim history is readable, the recent run-rate is
+        # measured from it and then expressed as bps of the same annualised
+        # volume, so the displayed rate stays coherent with the projection. The
+        # all-time effective rate is only a fallback: for km it averages across
+        # the pre- and post-migration eras and understates the current pace ~5x.
+        if builder_measured and builder_measured.get("measured") and avg_30d > 0:
+            run_rate_builder_bps = builder_measured["annualized_usd"] / (avg_30d * 365) * 10000
+        else:
+            run_rate_builder_bps = eff_builder_bps
         run_rate_total_bps = run_rate_deployer_bps + run_rate_builder_bps
         projections = {}
         for label, avg_d in [("last_7d", avg_7d), ("last_30d", avg_30d)]:
@@ -479,6 +495,8 @@ class RevenueCollector:
                 "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
             }
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
+            if builder_measured:
+                self.data["builder_revenue_measured"] = builder_measured
             # TVL, HYPE price and staking APR are read live from HyperEVM and
             # Hyperliquid; the historical and policy fields stay snapshot-based.
             self.data["lst"] = merge_with_snapshot(

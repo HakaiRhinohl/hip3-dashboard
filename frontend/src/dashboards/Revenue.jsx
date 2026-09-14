@@ -498,7 +498,9 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
             ))}
             <div style={{ flexBasis: "100%", color: C.muted, fontSize: 9 }}>
-              Audited snapshot {reconstruction.as_of}. Volume = daily base volume × close. The 30d run-rate annualizes trailing calendar volume at the current growth-mode deployer rate plus the observed builder-rate proxy. DefiLlama is excluded when it conflicts with transaction-level flows.
+              Volume = daily base volume × close. Deployer revenue is the audited reconstruction as of {reconstruction.as_of}; the live fee-recipient watermark is unusable for it. Builder revenue is measured, not estimated: {revData?.builder_revenue_measured
+                ? `${revData.builder_revenue_measured.claim_count} dated reward claims plus ${fmt(revData.builder_revenue_measured.unclaimed_usd)} still unclaimed, with the 30d run-rate taken over the ${revData.builder_revenue_measured.window_days}-day window since the claim on ${revData.builder_revenue_measured.window_start}`
+                : "read from the builder's cumulative rewards"}. DefiLlama is excluded when it conflicts with transaction-level flows.
             </div>
           </div>
         </>
