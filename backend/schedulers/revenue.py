@@ -17,6 +17,7 @@ from schedulers import hl_post
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
+from schedulers.lst import fetch_live_lst, merge_with_snapshot
 
 logger = logging.getLogger("kinetiq.revenue")
 
@@ -41,15 +42,17 @@ KINETIQ_ONCHAIN_SNAPSHOT = {
 }
 
 KINETIQ_LST_SNAPSHOT = {
-    "as_of": "2026-09-02",
+    "as_of": "2026-09-14",
     "khype": {
-        # 17.2M, not DefiLlama's 15M: DefiLlama's kHYPE TVL excludes institutional
-        # LST positions that Kinetiq itself tracks. tvl_usd uses the HYPE mid price
-        # at the time this snapshot was taken (~$81.16).
-        "tvl_hype": 17_200_000.0,
-        "tvl_usd": 1_395_874_600.0,
-        "gross_staking_apr": 0.02112,
-        "implied_annual_gross_rewards_usd": 29_480_871.55,
+        # Fallback only -- schedulers/lst.py reads these live from HyperEVM and
+        # replaces them on every collection. These are the last values that read
+        # cleanly: kHYPE plus the institutional LSTs (flowHYPE, HiHYPE, asxnHYPE,
+        # hylqHYPE), summed as supply x the protocol's own kHYPE->HYPE rate.
+        # kmHYPE is excluded here and tracked under "kmhype" instead.
+        "tvl_hype": 13_263_593.81,
+        "tvl_usd": 1_058_680_162.40,
+        "gross_staking_apr": 0.02142,
+        "implied_annual_gross_rewards_usd": 22_676_407.26,
         "performance_fee_rate": 0.10,
         "historical_protocol_revenue_usd": 2_466_790.0,
         "historical_treasury_usd": 1_910_000.0,
@@ -476,7 +479,11 @@ class RevenueCollector:
                 "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
             }
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
-            self.data["lst"] = KINETIQ_LST_SNAPSHOT
+            # TVL, HYPE price and staking APR are read live from HyperEVM and
+            # Hyperliquid; the historical and policy fields stay snapshot-based.
+            self.data["lst"] = merge_with_snapshot(
+                KINETIQ_LST_SNAPSHOT, fetch_live_lst(), now_str
+            )
             self.data["methodology"] = {
                 "volume": "Sum of daily candle base volume multiplied by close price across km and mkts",
                 "historical_effective_rate": "Protocol revenue divided by cumulative estimated USD volume",

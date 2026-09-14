@@ -30,16 +30,17 @@ const KINETIQ_ONCHAIN_FALLBACK = {
   operations_reinvestment: 271200,
 };
 
+// Fallback only. TVL, HYPE price and staking APR come from the API's `lst`
+// block, which the backend reads live from HyperEVM; these values are what it
+// last returned, used when that read fails.
 const KHYPE_REVENUE = {
   protocolRevenue: 2466790,
   treasury: 1910000,
   buybacks: 553800,
-  // 17.2M, not DefiLlama's 15M: DefiLlama's kHYPE TVL excludes institutional LST
-  // positions Kinetiq itself tracks. tvlUsd uses the HYPE mid at snapshot time (~$81.16).
-  tvlHype: 17200000,
-  tvlUsd: 1395874600,
-  grossStakingApr: 0.02112,
-  tvlAsOf: "2026-09-02",
+  tvlHype: 13263593.81,
+  tvlUsd: 1058680162.4,
+  grossStakingApr: 0.02142,
+  tvlAsOf: "2026-09-14",
   q4Onchain: {
     visibleFrom: "2025-10-08",
     transferEvents: 5653,
@@ -55,9 +56,29 @@ const KHYPE_REVENUE = {
   ],
 };
 
-const KHYPE_POLICY_PERIOD_REVENUE = KHYPE_REVENUE.buybacks / 0.70;
-const KHYPE_POLICY_TREASURY = KHYPE_POLICY_PERIOD_REVENUE * 0.30;
-const KHYPE_PRE_POLICY_RETAINED = KHYPE_REVENUE.treasury - KHYPE_POLICY_TREASURY;
+// Prefer the API's live LST block, fall back to the constant above field by field.
+function resolveKhype(lst) {
+  const k = lst?.khype || {};
+  const tvlUsd = k.tvl_usd ?? KHYPE_REVENUE.tvlUsd;
+  const apr = k.gross_staking_apr ?? KHYPE_REVENUE.grossStakingApr;
+  return {
+    isLive: lst?.source === "live",
+    asOf: (lst?.source === "live" ? lst.live_as_of : lst?.as_of) || KHYPE_REVENUE.tvlAsOf,
+    protocolRevenue: k.historical_protocol_revenue_usd ?? KHYPE_REVENUE.protocolRevenue,
+    treasury: k.historical_treasury_usd ?? KHYPE_REVENUE.treasury,
+    buybacks: k.historical_kntq_buybacks_usd ?? KHYPE_REVENUE.buybacks,
+    tvlHype: k.tvl_hype ?? KHYPE_REVENUE.tvlHype,
+    tvlUsd,
+    grossStakingApr: apr,
+    impliedRewards: k.implied_annual_gross_rewards_usd ?? tvlUsd * apr,
+    components: k.components || [],
+    quarters: (lst?.khype?.quarterly_revenue_usd || []).length
+      ? lst.khype.quarterly_revenue_usd.map((q) => ({
+          label: q.quarter, value: q.value, partial: q.partial,
+        }))
+      : KHYPE_REVENUE.quarters,
+  };
+}
 
 const KNTQ_BURN_FLOW = {
   deployer: "0x51172933b60847085e2a959e860e2ec9e240ac09",
@@ -252,6 +273,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
   }));
 
   const reconstruction = revData?.onchain_reconstruction || KINETIQ_ONCHAIN_FALLBACK;
+  const khype = resolveKhype(revData?.lst);
+  const khypePolicyPeriodRevenue = khype.buybacks / 0.70;
+  const khypePolicyTreasury = khypePolicyPeriodRevenue * 0.30;
+  const khypePrePolicyRetained = khype.treasury - khypePolicyTreasury;
   const migration = revData?.migration || {
     cutoff: MIGRATION_DATE,
     legacy: { dex: "km", quote: "USDH", last_day: MIGRATION_DATE },
@@ -421,15 +446,45 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>Historical revenue</div>
-                    <div style={{ color: C.text, fontSize: 23, fontWeight: 700 }}>{fmt(KHYPE_REVENUE.protocolRevenue)}</div>
+                    <div style={{ color: C.text, fontSize: 23, fontWeight: 700 }}>{fmt(khype.protocolRevenue)}</div>
                   </div>
                 </div>
                 <div style={{ marginTop: 18 }}>
-                  <AllocationBar label="Treasury / retained (lifetime)" value={KHYPE_REVENUE.treasury} total={KHYPE_REVENUE.protocolRevenue} color={C.amber} note={`Includes ~${fmt(KHYPE_PRE_POLICY_RETAINED)} retained before the 70/30 policy`} />
-                  <AllocationBar label="KNTQ buybacks (policy period)" value={KHYPE_REVENUE.buybacks} total={KHYPE_REVENUE.protocolRevenue} color={accent} note="70% of eligible fees since 2026-04-09, not 70% of lifetime revenue" />
+                  <AllocationBar label="Treasury / retained (lifetime)" value={khype.treasury} total={khype.protocolRevenue} color={C.amber} note={`Includes ~${fmt(khypePrePolicyRetained)} retained before the 70/30 policy`} />
+                  <AllocationBar label="KNTQ buybacks (policy period)" value={khype.buybacks} total={khype.protocolRevenue} color={accent} note="70% of eligible fees since 2026-04-09, not 70% of lifetime revenue" />
                 </div>
+
+                {/* TVL block — live from HyperEVM when available */}
+                <div style={{ background: C.bg, borderRadius: 6, padding: "11px 12px", marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em" }}>Staked via Kinetiq</span>
+                    <span style={{
+                      fontSize: 8, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 20,
+                      color: khype.isLive ? accent : C.muted,
+                      background: khype.isLive ? `${accent}18` : "transparent",
+                      border: `1px solid ${khype.isLive ? accent + "55" : C.border}`,
+                    }}>
+                      {khype.isLive ? "live" : "snapshot"} · {khype.asOf}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+                    <span style={{ color: C.text, fontSize: 19, fontWeight: 700 }}>{(khype.tvlHype / 1e6).toFixed(2)}M HYPE</span>
+                    <span style={{ color: C.muted, fontSize: 11 }}>{fmt(khype.tvlUsd)}</span>
+                  </div>
+                  {khype.components.length > 0 && (
+                    <div style={{ color: C.muted, fontSize: 9, marginTop: 6, lineHeight: 1.6 }}>
+                      {khype.components
+                        .filter((c) => c.hype >= 100)
+                        .sort((a, b) => b.hype - a.hype)
+                        .map((c) => `${c.name} ${c.hype >= 1e6 ? `${(c.hype / 1e6).toFixed(2)}M` : `${(c.hype / 1e3).toFixed(1)}K`}`)
+                        .join(" · ")}
+                      <span style={{ color: C.subtle }}> — supply × the protocol's own kHYPE→HYPE rate. kmHYPE is counted separately.</span>
+                    </div>
+                  )}
+                </div>
+
                 <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>
-                  Since 2026-04-09, eligible performance fees split 70% to KNTQ buybacks and 30% to treasury. Reconstructed policy-period treasury: ~{fmt(KHYPE_POLICY_TREASURY)}. TVL reference at {KHYPE_REVENUE.tvlAsOf}: {(KHYPE_REVENUE.tvlHype / 1e6).toFixed(1)}M HYPE ({fmt(KHYPE_REVENUE.tvlUsd)}). At {(KHYPE_REVENUE.grossStakingApr * 100).toFixed(2)}% gross APR, implied annual staking rewards are {fmt(KHYPE_REVENUE.tvlUsd * KHYPE_REVENUE.grossStakingApr)}; this is yield, not TVL or protocol revenue.
+                  Since 2026-04-09, eligible performance fees split 70% to KNTQ buybacks and 30% to treasury. Reconstructed policy-period treasury: ~{fmt(khypePolicyTreasury)}. At {(khype.grossStakingApr * 100).toFixed(2)}% gross APR, implied annual staking rewards are {fmt(khype.impliedRewards)}; this is yield, not TVL or protocol revenue.
                 </div>
               </div>
 
@@ -491,7 +546,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
             <div className="lst-bottom-grid" style={{ gap: 14 }}>
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
                 <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>kHYPE revenue by quarter</div>
-                {KHYPE_REVENUE.quarters.map((quarter) => (
+                {khype.quarters.map((quarter) => (
                   <div key={quarter.label} style={{ display: "grid", gridTemplateColumns: "62px 1fr 72px", gap: 10, alignItems: "center", marginBottom: 10, fontSize: 10 }}>
                     <span style={{ color: C.muted }}>{quarter.label}</span>
                     <div style={{ background: C.card, height: 7, borderRadius: 10, overflow: "hidden" }}>
