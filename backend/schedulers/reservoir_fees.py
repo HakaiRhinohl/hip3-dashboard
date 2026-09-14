@@ -107,10 +107,17 @@ def _aggregate(conn: sqlite3.Connection, path: str, dex: str, day: str) -> bool:
         return False
     try:
         d = duckdb.connect()
+        # The reservoir's schema is not stable across the whole history: files
+        # written before 2026-03-21 carry `builder`/`builder_fee` but have no
+        # `deployer_fee` column at all. Those days are still worth ingesting for
+        # the builder side, so deployer is selected only when it exists and is
+        # stored NULL otherwise -- distinguishing "not recorded" from "zero".
+        cols = {r[0] for r in d.execute(f"DESCRIBE SELECT * FROM read_parquet('{path}')").fetchall()}
+        dep = "SUM(CAST(deployer_fee AS DOUBLE))" if "deployer_fee" in cols else "NULL"
         totals = d.execute(f"""
             SELECT COUNT(*),
                    SUM(CAST(price AS DOUBLE) * CAST(size AS DOUBLE)),
-                   SUM(CAST(deployer_fee AS DOUBLE)),
+                   {dep},
                    SUM(CAST(builder_fee AS DOUBLE))
             FROM read_parquet('{path}')
         """).fetchone()
@@ -128,7 +135,7 @@ def _aggregate(conn: sqlite3.Connection, path: str, dex: str, day: str) -> bool:
 
     conn.execute(
         "INSERT OR REPLACE INTO dex_daily VALUES (?,?,?,?,?,?)",
-        (day, dex, totals[0] or 0, totals[1] or 0.0, totals[2] or 0.0, totals[3] or 0.0),
+        (day, dex, totals[0] or 0, totals[1] or 0.0, totals[2], totals[3] or 0.0),
     )
     conn.executemany(
         "INSERT OR REPLACE INTO dex_builder_daily VALUES (?,?,?,?,?,?)",
@@ -196,11 +203,16 @@ def markets_fees(builders: list[str]) -> dict | None:
     dropped, so the split stays visible.
     """
     conn = _db()
-    row = conn.execute("SELECT COUNT(*), SUM(deployer_fee), SUM(notional) FROM dex_daily").fetchone()
+    row = conn.execute("""
+        SELECT COUNT(*), SUM(deployer_fee), SUM(notional),
+               COUNT(deployer_fee), MIN(CASE WHEN deployer_fee IS NOT NULL THEN date END)
+        FROM dex_daily
+    """).fetchone()
     if not row or not row[0]:
         conn.close()
         return None
     days, deployer, notional = row[0], row[1] or 0.0, row[2] or 0.0
+    deployer_days, deployer_from = row[3] or 0, row[4]
 
     ours = {b.lower() for b in builders if b}
     mine = other = 0.0
@@ -223,6 +235,12 @@ def markets_fees(builders: list[str]) -> dict | None:
     conn.close()
     return {
         "deployer_fee_usd": round(deployer, 2),
+        # The deployer side covers fewer days than the builder side: the older
+        # parquet schema has no deployer_fee column, so those days contribute
+        # builder fees only and this total is a floor, not a cumulative.
+        "deployer_days": deployer_days,
+        "deployer_from": deployer_from,
+        "deployer_partial": deployer_days < days,
         "builder_fee_markets_usd": round(mine, 2),
         "builder_fee_other_usd": round(other, 2),
         "total_usd": round(deployer + mine, 2),

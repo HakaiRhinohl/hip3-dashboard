@@ -344,7 +344,7 @@ class RevenueCollector:
             # because the fee recipient's account value moves with more than fee
             # accrual.
             reservoir = markets_fees(self.cfg["builders"])
-            if reservoir and reservoir.get("complete"):
+            if reservoir and reservoir.get("complete") and not reservoir.get("deployer_partial"):
                 deployer_fees = reservoir["deployer_fee_usd"]
             else:
                 deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]
