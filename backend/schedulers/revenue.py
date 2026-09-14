@@ -108,8 +108,19 @@ KINETIQ_LST_SNAPSHOT = {
 DEX_CONFIG = {
     "km": {
         "fee_recipient": "0xbcd4071d023bf2aae484d724c130b5af6f0ca0d2",
+        # Markets runs more than one builder code, one per surface. Both count:
+        # revenue here is the DEX plus the app, so flow the apps route to the
+        # main exchange belongs in it too.
+        #   0x42f3226... web app, settles straight into the fee recipient
+        #   0x2af94a24... mobile app, settles via 0x9cb4ac25... into sKNTQ buybacks
+        # Tread.fi (0x999a4b5f...) routes ~half of mkts volume but is a third
+        # party -- it predates Markets and never touches a Kinetiq wallet -- so
+        # its builder fees are not Markets revenue.
         # The staking builder is deliberately excluded from Markets revenue.
-        "builders": ["0x42f3226007290b02c5a0b15bccbb1ba6df04f992"],
+        "builders": [
+            "0x42f3226007290b02c5a0b15bccbb1ba6df04f992",
+            "0x2af94a24e1f744a8e251b4996283ffb4657e915d",
+        ],
         "dex_sources": [
             {"dex": "km", "quote": "USDH", "era": "legacy"},
             {"dex": "mkts", "quote": "USDC", "era": "current"},

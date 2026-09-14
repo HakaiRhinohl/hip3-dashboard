@@ -44,22 +44,42 @@ def _cumulative_rewards(address: str) -> float | None:
 
 
 def _claims(address: str) -> list[tuple[int, float]]:
-    """Dated (timestamp_ms, amount) for every rewardsClaim, oldest first."""
-    ledger = hl_post(
-        {"type": "userNonFundingLedgerUpdates", "user": address, "startTime": 0},
-        f"ledger {address[:8]}",
-    )
-    if not isinstance(ledger, list):
-        return []
-    out = []
-    for rec in ledger:
-        delta = rec.get("delta", {})
-        if delta.get("type") != "rewardsClaim":
-            continue
-        try:
-            out.append((rec.get("time", 0), float(delta.get("amount", 0) or 0)))
-        except (TypeError, ValueError):
-            continue
+    """
+    Dated (timestamp_ms, amount) for every rewardsClaim, oldest first.
+
+    The ledger endpoint caps a response at 2000 records and returns the oldest
+    ones, so it has to be paged. Some builder addresses are busy enough to hit
+    that cap repeatedly -- the mobile builder logs 2000 records in under a
+    month -- and a single unpaged call would miss nearly all of its claims.
+    """
+    out: list[tuple[int, float]] = []
+    seen: set[tuple[int, str]] = set()
+    start_ms = 0
+    for _ in range(60):
+        page = hl_post(
+            {"type": "userNonFundingLedgerUpdates", "user": address, "startTime": start_ms},
+            f"ledger {address[:8]}",
+        )
+        if not isinstance(page, list) or not page:
+            break
+        for rec in page:
+            delta = rec.get("delta", {})
+            if delta.get("type") != "rewardsClaim":
+                continue
+            key = (rec.get("time", 0), str(delta.get("amount")))
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                out.append((rec.get("time", 0), float(delta.get("amount", 0) or 0)))
+            except (TypeError, ValueError):
+                continue
+        if len(page) < 2000:
+            break
+        newest = max(r.get("time", 0) for r in page)
+        if newest <= start_ms:
+            break  # no forward progress; stop rather than loop
+        start_ms = newest
     out.sort()
     return out
 
