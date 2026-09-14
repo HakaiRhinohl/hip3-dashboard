@@ -152,6 +152,124 @@ function AllocationBar({ label, value, total, color, note }) {
   );
 }
 
+// Provider colours for the share view. Kinetiq keeps the dashboard's accent so
+// it reads as "us" against the rest of the ecosystem.
+const PROVIDER_COLORS = {
+  Kinetiq: "#00e5a0",
+  Valantis: "#7c5cfc",
+  Ventuals: "#ff4d6a",
+  Hyperbeat: "#ffb020",
+  Hyperdrive: "#38bdf8",
+  Hyperpie: "#f472b6",
+  Kintsu: "#2dd4bf",
+  AlphaTicks: "#a3e635",
+};
+const providerColor = (p) => PROVIDER_COLORS[p] || C.subtle;
+
+const fmtSupply = (n) => {
+  if (n == null || isNaN(n)) return "—";
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(2)}K`;
+  return n.toFixed(2);
+};
+
+function LstShare({ data, accent }) {
+  if (!data?.providers?.length) {
+    return (
+      <div style={{ height: 320, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>
+        LST share data unavailable
+      </div>
+    );
+  }
+
+  const { providers, tokens, unresolved = [] } = data;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>HYPE liquid staking share</h3>
+          <p style={{ color: C.muted, fontSize: 10, margin: "4px 0 0" }}>
+            Grouped by the team behind each LST — Kinetiq's institutional deployments count toward Kinetiq
+          </p>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>Total tracked</div>
+          <div style={{ color: C.text, fontSize: 17, fontWeight: 700 }}>{fmtSupply(data.total_supply)} HYPE</div>
+          <div style={{ color: C.muted, fontSize: 10 }}>{fmt(data.total_supply_usd)}</div>
+        </div>
+      </div>
+
+      <div className="lst-share-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1.15fr)", gap: 20 }}>
+        <div>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie data={providers} dataKey="supply" nameKey="provider" cx="50%" cy="50%"
+                innerRadius={62} outerRadius={104} paddingAngle={2} isAnimationActive={false}
+                label={({ provider, share_pct }) => (share_pct >= 3 ? `${provider} ${share_pct.toFixed(1)}%` : "")}
+                labelLine={{ stroke: C.muted, strokeWidth: 1 }}
+                style={{ fontSize: 9, fontFamily: "inherit" }}>
+                {providers.map((p) => <Cell key={p.provider} fill={providerColor(p.provider)} stroke="none" />)}
+              </Pie>
+              <Tooltip formatter={(v, n) => [`${fmtSupply(v)} HYPE`, n]} />
+            </PieChart>
+          </ResponsiveContainer>
+
+          <div style={{ marginTop: 6 }}>
+            {providers.map((p) => (
+              <div key={p.provider} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 10, borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: providerColor(p.provider), flexShrink: 0 }} />
+                <span style={{ color: C.text, flex: 1 }}>{p.provider}</span>
+                <span style={{ color: C.muted }}>{fmtSupply(p.supply)}</span>
+                <span style={{ color: providerColor(p.provider), width: 52, textAlign: "right", fontWeight: 600 }}>{p.share_pct.toFixed(2)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 420 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {["Token", "Provider", "Supply", "Supply USD", "Share"].map((h, i) => (
+                    <th key={i} style={{ padding: "6px 8px", textAlign: i >= 2 ? "right" : "left", color: C.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tokens.map((t) => (
+                  <tr key={t.symbol} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "7px 8px", fontWeight: 600, color: C.text }}>
+                      <span style={{ color: providerColor(t.provider) }}>●</span> {t.symbol}
+                      {t.note && <div style={{ color: C.subtle, fontSize: 8, marginTop: 1 }}>{t.note}</div>}
+                    </td>
+                    <td style={{ padding: "7px 8px", color: C.muted }}>{t.provider}</td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", color: C.text }}>{fmtSupply(t.supply)}</td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", color: C.muted }}>{fmt(t.supply_usd)}</td>
+                    <td style={{ padding: "7px 8px", textAlign: "right", color: t.provider === "Kinetiq" ? accent : C.muted, fontWeight: 600 }}>
+                      {t.share_pct.toFixed(2)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {unresolved.length > 0 && (
+            <div style={{ marginTop: 10, background: C.bg, borderRadius: 6, padding: "8px 11px", color: C.muted, fontSize: 9, lineHeight: 1.6 }}>
+              Not counted yet: {unresolved.map((u) => `${u.symbol} (${u.provider})`).join(" · ")} — token addresses still unresolved, so the shares above are of what is tracked, not of the whole market.
+            </div>
+          )}
+          <div style={{ marginTop: 8, color: C.subtle, fontSize: 9, lineHeight: 1.55 }}>
+            {data.basis}. Read live from HyperEVM at the HYPE mid of {fmt(data.hype_price_usd)}.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WalletRow({ role, address }) {
   return (
     <div className="wallet-row" style={{ padding: "9px 0", borderBottom: `1px solid ${C.border}`, display: "grid", gridTemplateColumns: "160px 1fr", gap: 12, fontSize: 10 }}>
@@ -285,7 +403,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const tabs = [
     { id: "revenue", label: "Revenue" },
-    ...(isKm ? [{ id: "lst", label: "LST Revenue" }] : []),
+    ...(isKm ? [{ id: "lst", label: "LST Revenue" }, { id: "lstshare", label: "LST Share" }] : []),
     { id: "volume", label: "Volume" },
     { id: "breakdown", label: "Breakdown" },
     { id: "tickers", label: "Tickers" },
@@ -315,6 +433,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
           .wallet-row { grid-template-columns: 1fr !important; gap: 4px !important; }
           .burn-wallet-flow { grid-template-columns: 1fr !important; }
           .breakdown-grid { grid-template-columns: 1fr !important; }
+          .lst-share-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
       {/* Header */}
@@ -567,6 +686,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
             </div>
           </div>
+        )}
+
+        {tab === "lstshare" && isKm && (
+          <LstShare data={revData?.lst?.ecosystem} accent={accent} />
         )}
 
         {tab === "volume" && (

@@ -50,6 +50,35 @@ KMHYPE = ("0x360C140E5344A1A0593D44B4ea6Fc7C3DAf0C473", "0x5901e744759561C633098
 # gross staking rate before the protocol's performance fee.
 KINETIQ_VALIDATOR = "0xeeee86f718f9da3e7250624a460f6ea710e9c006"
 
+# Every HYPE LST on HyperEVM, for the ecosystem share view. Each address was
+# verified by calling symbol() on it -- searching by ticker alone is unsafe,
+# e.g. an unrelated 568M-supply token also answers to "HYPED".
+#
+# `provider` is the team the LST belongs to and is what the share chart groups
+# by; the table breaks the individual tokens back out.
+#
+# Comparison here is on token supply, valued at the HYPE mid. Each LST accrues
+# at its own rate and only Kinetiq's expose one we can read, so converting some
+# to HYPE backing and not others would make the shares incomparable.
+ECOSYSTEM_LSTS = [
+    {"symbol": "kHYPE",    "provider": "Kinetiq",    "token": "0xfD739d4e423301CE9385c1fb8850539D657C296D"},
+    {"symbol": "kmHYPE",   "provider": "Kinetiq",    "token": "0x360C140E5344A1A0593D44B4ea6Fc7C3DAf0C473", "note": "Markets-linked"},
+    {"symbol": "HiHYPE",   "provider": "Kinetiq",    "token": "0x4f322145aBedb2b39f69e7d4531AB4B2e6483154", "note": "institutional"},
+    {"symbol": "flowHYPE", "provider": "Kinetiq",    "token": "0x86d96fF0E78Dba9570b00f75807ce21213a19f3d", "note": "institutional"},
+    {"symbol": "hylqHYPE", "provider": "Kinetiq",    "token": "0x498edC41Fa92530920a95483dea7a6CCe91F1C5c", "note": "institutional"},
+    {"symbol": "asxnHYPE", "provider": "Kinetiq",    "token": "0x8599F2eFA5064C666B920E71381b5aaBc7Bb27F6", "note": "institutional"},
+    {"symbol": "stHYPE",   "provider": "Valantis",   "token": "0xffaa4a3d97fe9107cef8a3f48c069f577ff76cc1", "note": "built by Thunderhead, acquired by Valantis in Aug 2025"},
+    {"symbol": "vHYPE",    "provider": "Ventuals",   "token": "0x8888888fdaac0e7cf8c6523c8955bf7954c216fa", "note": "winding down since Jun 2026, redeeming for HYPE"},
+    {"symbol": "beHYPE",   "provider": "Hyperbeat",  "token": "0xd8fc8f0b03eba61f64d08b0bef69d80916e5dda9", "note": "built with ether.fi"},
+    {"symbol": "mHYPE",    "provider": "Hyperpie",   "token": "0xdabb040c428436d41cecd0fb06bcfdbaad3a9aa8", "note": "Magpie SubDAO, rebranded SpinUp"},
+    # Addresses not resolved yet -- left here so the share view can say what it
+    # is missing instead of silently under-reporting the ecosystem total.
+    {"symbol": "iHYPE",    "provider": "Kinetiq",    "token": None, "note": "institutional pool"},
+    {"symbol": "HYPED",    "provider": "Hyperdrive", "token": None, "note": "CoreWriter + precompiles"},
+    {"symbol": "sHYPE",    "provider": "Kintsu",     "token": None},
+    {"symbol": "aHYPE",    "provider": "AlphaTicks", "token": None, "note": "AlphaTicks absorbed by Hfun Labs"},
+]
+
 
 def _eth_call(to: str, data: str) -> int | None:
     """One eth_call returning a single uint256, or None if anything is off."""
@@ -161,11 +190,90 @@ def fetch_live_lst() -> dict | None:
             "rate": kmhype["rate"],
         }
 
+    ecosystem = fetch_ecosystem_share(price)
+    if ecosystem:
+        live["ecosystem"] = ecosystem
+
     logger.info(
         f"LST live: {khype_hype:,.0f} HYPE across {len(components)} LSTs "
         f"@ ${price:,.2f}" + (f", APR {apr:.4%}" if apr is not None else "")
     )
     return live
+
+
+def fetch_ecosystem_share(price: float | None = None) -> dict | None:
+    """
+    Supply of every HYPE LST on HyperEVM, grouped by provider.
+
+    Returns None only if nothing could be read at all; a single unreachable
+    token is reported in `unresolved` rather than dropped silently, so the
+    share percentages can be read knowing what is missing from them.
+    """
+    if price is None:
+        price = _hype_price()
+    if price is None:
+        logger.warning("HYPE price unavailable; skipping ecosystem share")
+        return None
+
+    tokens, unresolved = [], []
+    for entry in ECOSYSTEM_LSTS:
+        if not entry.get("token"):
+            unresolved.append({"symbol": entry["symbol"], "provider": entry["provider"],
+                               "reason": "address not configured"})
+            continue
+        raw = _eth_call(entry["token"], SEL_TOTAL_SUPPLY)
+        if raw is None:
+            unresolved.append({"symbol": entry["symbol"], "provider": entry["provider"],
+                               "reason": "supply unreadable"})
+            continue
+        supply = raw / 1e18
+        tokens.append({
+            "symbol": entry["symbol"],
+            "provider": entry["provider"],
+            "token": entry["token"],
+            "note": entry.get("note"),
+            "supply": round(supply, 4),
+            "supply_usd": round(supply * price, 2),
+        })
+
+    if not tokens:
+        logger.warning("no LST supplies readable; skipping ecosystem share")
+        return None
+
+    total = sum(t["supply"] for t in tokens)
+    for t in tokens:
+        t["share_pct"] = round(t["supply"] / total * 100, 4) if total > 0 else 0
+    tokens.sort(key=lambda t: -t["supply"])
+
+    by_provider: dict[str, dict] = {}
+    for t in tokens:
+        p = by_provider.setdefault(t["provider"], {"provider": t["provider"], "supply": 0.0, "tokens": []})
+        p["supply"] += t["supply"]
+        p["tokens"].append(t["symbol"])
+    providers = []
+    for p in by_provider.values():
+        providers.append({
+            "provider": p["provider"],
+            "supply": round(p["supply"], 4),
+            "supply_usd": round(p["supply"] * price, 2),
+            "share_pct": round(p["supply"] / total * 100, 4) if total > 0 else 0,
+            "tokens": p["tokens"],
+        })
+    providers.sort(key=lambda p: -p["supply"])
+
+    logger.info(
+        f"LST share: {total:,.0f} HYPE-denominated supply across {len(tokens)} LSTs / "
+        f"{len(providers)} providers" + (f", {len(unresolved)} unresolved" if unresolved else "")
+    )
+    return {
+        "hype_price_usd": round(price, 4),
+        "total_supply": round(total, 4),
+        "total_supply_usd": round(total * price, 2),
+        "providers": providers,
+        "tokens": tokens,
+        "unresolved": unresolved,
+        "basis": "token supply valued at the HYPE mid; each LST accrues at its own rate",
+    }
 
 
 def merge_with_snapshot(snapshot: dict, live: dict | None, now_str: str) -> dict:
@@ -197,5 +305,7 @@ def merge_with_snapshot(snapshot: dict, live: dict | None, now_str: str) -> dict
 
     if live.get("kmhype"):
         merged.setdefault("kmhype", {}).update(live["kmhype"])
+    if live.get("ecosystem"):
+        merged["ecosystem"] = live["ecosystem"]
 
     return merged
