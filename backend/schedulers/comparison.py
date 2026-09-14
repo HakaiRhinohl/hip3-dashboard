@@ -15,12 +15,14 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 
 logger = logging.getLogger("kinetiq.comparison")
 
-DEXES = ["km", "xyz", "flx", "cash"]
+DEXES = ["km", "xyz", "flx", "cash", "para", "io"]
 DEX_NAMES = {
     "km": "Markets (Kinetiq)",
     "xyz": "Trade.xyz",
     "flx": "Felix",
     "cash": "Dreamcash",
+    "para": "Paragon",
+    "io": "io",
 }
 
 

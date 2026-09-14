@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger("kinetiq")
 
 # ── Collectors (hold data in memory) ──────────────────────
-REVENUE_DEXES = ["km", "xyz", "flx", "cash"]
+REVENUE_DEXES = ["km", "xyz", "flx", "cash", "para", "io"]
 revenue_collectors = {dex: RevenueCollector(dex) for dex in REVENUE_DEXES}
 comparison_collector = ComparisonCollector()
 liquidity_collector = LiquidityCollector()
@@ -201,7 +201,7 @@ def get_snapshot(
         "endpoints": {
             "snapshot": "/api/snapshot",
             "health": "/api/health",
-            "revenue": "/api/revenue?dex=km|xyz|flx|cash",
+            "revenue": "/api/revenue?dex=km|xyz|flx|cash|para|io",
             "comparison": "/api/comparison",
             "liquidity": "/api/liquidity?hours=1..168",
             "liquidity_timeseries": "/api/liquidity/timeseries?ticker=US500&hours=4",
@@ -217,7 +217,7 @@ def get_snapshot(
 
 @app.get("/api/revenue")
 def get_revenue(dex: str = Query(default="km")):
-    """Revenue data per DEX. ?dex=km|xyz|flx|cash"""
+    """Revenue data per DEX. ?dex=km|xyz|flx|cash|para|io"""
     collector = revenue_collectors.get(dex)
     if not collector:
         return {"error": f"Unknown dex: {dex}. Valid: {REVENUE_DEXES}"}

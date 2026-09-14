@@ -10,9 +10,11 @@ const DEX_META = {
   xyz: { name: "Trade.xyz", color: "#7c5cfc" },
   flx: { name: "Felix", color: "#ff4d6a" },
   cash: { name: "Dreamcash", color: "#ffb020" },
-  bench500m: { name: "500M/d Benchmark", color: "#38bdf8" },
+  para: { name: "Paragon", color: "#38bdf8" },
+  io: { name: "io", color: "#f472b6" },
+  bench500m: { name: "500M/d Benchmark", color: "#a3e635" },
 };
-const DEXES = ["km", "xyz", "flx", "cash"];
+const DEXES = ["km", "xyz", "flx", "cash", "para", "io"];
 
 // Hypothetical volume scenario, not observed data: "what if daily volume were $500M?"
 // Selectable as a volume source (never as a rate source — a benchmark has no fee rate of its own).

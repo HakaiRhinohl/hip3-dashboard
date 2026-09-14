@@ -128,6 +128,18 @@ DEX_CONFIG = {
         "builders": ["0xffa8198c62adb1e811629bd54c9b646d726deef7", "0x4950994884602d1b6c6d96e4fe30f58205c39395"],
         "growth_discount": None,
     },
+    "para": {
+        "fee_recipient": "0x1770f43c71b8b2977771b73ca4c4cbe0c20412ed",
+        "builders": ["0x8888888c43cbb7e1c4132542e46831bffd866ed3"],
+        "growth_discount": None,
+    },
+    "io": {
+        # perpDexs publishes no feeRecipient for io; fees accrue on the deployer
+        # address itself, so that is what the clearinghouse balance is read from.
+        "fee_recipient": "0x320c8988e3d1b5198f335802d7bfd2728a8fcac6",
+        "builders": ["0x320c8988e3d1b5198f335802d7bfd2728a8fcac6"],
+        "growth_discount": None,
+    },
 }
 
 

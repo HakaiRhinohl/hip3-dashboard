@@ -6,8 +6,8 @@ import {
 import { useApiData } from "../hooks/useApiData";
 import { Loading, ErrorState } from "../components/States";
 
-const DEX_COLORS = { km: "#00e5a0", xyz: "#7c5cfc", flx: "#ff4d6a", cash: "#ffb020" };
-const DEX_NAMES  = { km: "Markets", xyz: "Trade.xyz", flx: "Felix", cash: "Dreamcash" };
+const DEX_COLORS = { km: "#00e5a0", xyz: "#7c5cfc", flx: "#ff4d6a", cash: "#ffb020", para: "#38bdf8", io: "#f472b6" };
+const DEX_NAMES  = { km: "Markets", xyz: "Trade.xyz", flx: "Felix", cash: "Dreamcash", para: "Paragon", io: "io" };
 const P = { bg: "#060911", card: "#0c1020", border: "#151d38", subtle: "#1a2545", text: "#e4eaf3", muted: "#4f5e82" };
 
 const fmt = (n) => {
@@ -54,7 +54,11 @@ const ShareTip = ({ active, payload, label }) => {
   );
 };
 
-const DEXES = ["km", "xyz", "flx", "cash"];
+const DEXES = ["km", "xyz", "flx", "cash", "para", "io"];
+
+// Chart series are stacked/layered smallest-first so the largest venue reads on
+// top; km is drawn last everywhere so it stays the visual anchor.
+const SERIES_ORDER = ["xyz", "cash", "para", "io", "flx", "km"];
 
 export default function ComparisonDashboard() {
   const { data: apiData, loading, error, refetch } = useApiData("/api/comparison");
@@ -144,7 +148,9 @@ export default function ComparisonDashboard() {
       `}</style>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>HIP-3 Market Comparison</h1>
-        <p style={{ color: P.muted, fontSize: 11, margin: "4px 0 0" }}>Canonical Revenue data · Markets vs Trade.xyz vs Felix vs Dreamcash · updated {d.generated_at}</p>
+        <p style={{ color: P.muted, fontSize: 11, margin: "4px 0 0" }}>
+          Canonical Revenue data · {DEXES.map((dx) => DEX_NAMES[dx]).join(" vs ")} · updated {d.generated_at}
+        </p>
       </div>
 
       {/* Summary cards */}
@@ -192,10 +198,10 @@ export default function ComparisonDashboard() {
                 <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickFormatter={fS} tickLine={false} axisLine={false} />
                 <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
                 <ReferenceLine x={migrationDate} stroke="#ffb020" strokeDasharray="4 3" label={{ value: "km → mkts", fill: "#ffb020", fontSize: 9, position: "insideTopRight" }} />
-                <Area type="monotone" dataKey="xyz_cum"  name="Trade.xyz" stroke={DEX_COLORS.xyz}  fill={DEX_COLORS.xyz  + "20"} strokeWidth={2} />
-                <Area type="monotone" dataKey="cash_cum" name="Dreamcash" stroke={DEX_COLORS.cash} fill={DEX_COLORS.cash + "20"} strokeWidth={2} />
-                <Area type="monotone" dataKey="flx_cum"  name="Felix"     stroke={DEX_COLORS.flx}  fill={DEX_COLORS.flx  + "20"} strokeWidth={2} />
-                <Area type="monotone" dataKey="km_cum"   name="Markets"   stroke={DEX_COLORS.km}   fill={DEX_COLORS.km   + "20"} strokeWidth={2} />
+                {SERIES_ORDER.map((dx) => (
+                  <Area key={dx} type="monotone" dataKey={`${dx}_cum`} name={DEX_NAMES[dx]}
+                    stroke={DEX_COLORS[dx]} fill={DEX_COLORS[dx] + "20"} strokeWidth={2} isAnimationActive={false} />
+                ))}
               </AreaChart>
             </ResponsiveContainer>
             <div style={{ marginTop: 16, overflowX: "auto" }}>
@@ -232,10 +238,11 @@ export default function ComparisonDashboard() {
                 <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickFormatter={fS} tickLine={false} axisLine={false} />
                 <Tooltip content={<Tip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
                 <ReferenceLine x={migrationDate} stroke="#ffb020" strokeDasharray="4 3" label={{ value: "USDH → USDC", fill: "#ffb020", fontSize: 9, position: "insideTopRight" }} />
-                <Bar dataKey="xyz_vol"  name="Trade.xyz" fill={DEX_COLORS.xyz}  opacity={0.6} stackId="a" barSize={5} />
-                <Bar dataKey="cash_vol" name="Dreamcash" fill={DEX_COLORS.cash} opacity={0.6} stackId="a" barSize={5} />
-                <Bar dataKey="flx_vol"  name="Felix"     fill={DEX_COLORS.flx}  opacity={0.7} stackId="a" barSize={5} />
-                <Bar dataKey="km_vol"   name="Markets"   fill={DEX_COLORS.km}   opacity={0.9} stackId="a" barSize={5} radius={[2, 2, 0, 0]} />
+                {SERIES_ORDER.map((dx, i) => (
+                  <Bar key={dx} dataKey={`${dx}_vol`} name={DEX_NAMES[dx]} fill={DEX_COLORS[dx]}
+                    opacity={dx === "km" ? 0.9 : 0.65} stackId="a" barSize={5} isAnimationActive={false}
+                    radius={i === SERIES_ORDER.length - 1 ? [2, 2, 0, 0] : undefined} />
+                ))}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -305,10 +312,10 @@ export default function ComparisonDashboard() {
                 <YAxis tick={{ fill: P.muted, fontSize: 9 }} tickFormatter={(v) => `${v.toFixed(0)}%`} tickLine={false} axisLine={false} domain={[0, 100]} />
                 <Tooltip content={<ShareTip />} /><Legend wrapperStyle={{ fontSize: 10 }} />
                 <ReferenceLine x={migrationDate} stroke="#ffb020" strokeDasharray="4 3" label={{ value: "km → mkts", fill: "#ffb020", fontSize: 9, position: "insideTopRight" }} />
-                <Area type="monotone" dataKey="xyz"  name="Trade.xyz" stroke={DEX_COLORS.xyz}  fill={DEX_COLORS.xyz}  fillOpacity={0.75} stackId="1" />
-                <Area type="monotone" dataKey="cash" name="Dreamcash" stroke={DEX_COLORS.cash} fill={DEX_COLORS.cash} fillOpacity={0.75} stackId="1" />
-                <Area type="monotone" dataKey="flx"  name="Felix"     stroke={DEX_COLORS.flx}  fill={DEX_COLORS.flx}  fillOpacity={0.75} stackId="1" />
-                <Area type="monotone" dataKey="km"   name="Markets"   stroke={DEX_COLORS.km}   fill={DEX_COLORS.km}   fillOpacity={0.85} stackId="1" />
+                {SERIES_ORDER.map((dx) => (
+                  <Area key={dx} type="monotone" dataKey={dx} name={DEX_NAMES[dx]} stroke={DEX_COLORS[dx]}
+                    fill={DEX_COLORS[dx]} fillOpacity={dx === "km" ? 0.85 : 0.75} stackId="1" isAnimationActive={false} />
+                ))}
               </AreaChart>
             </ResponsiveContainer>
           </div>
