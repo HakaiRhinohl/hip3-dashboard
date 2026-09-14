@@ -15,7 +15,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from schedulers.revenue import RevenueCollector
 from schedulers.comparison import ComparisonCollector
 from schedulers.liquidity import LiquidityCollector
-from schedulers.users import UsersCollector
 from schedulers.buybacks import BuybacksCollector
 from schedulers.fee_db import init_fee_db
 
@@ -31,7 +30,6 @@ REVENUE_DEXES = ["km", "xyz", "flx", "cash", "para", "io"]
 revenue_collectors = {dex: RevenueCollector(dex) for dex in REVENUE_DEXES}
 comparison_collector = ComparisonCollector()
 liquidity_collector = LiquidityCollector()
-users_collector = UsersCollector()
 buybacks_collector = BuybacksCollector()
 
 scheduler = AsyncIOScheduler()
@@ -67,14 +65,6 @@ async def run_liquidity_snapshot():
         logger.error(f"Liquidity snapshot failed: {e}")
 
 
-async def run_users():
-    try:
-        await asyncio.to_thread(users_collector.collect)
-        logger.info("Users collection complete")
-    except Exception as e:
-        logger.error(f"Users collection failed: {e}")
-
-
 async def run_buybacks():
     try:
         await asyncio.to_thread(buybacks_collector.collect)
@@ -90,7 +80,6 @@ async def run_initial_collection():
     await run_revenue()
     await run_liquidity_snapshot()
     await run_buybacks()
-    await asyncio.to_thread(users_collector.maybe_start_bootstrap)
 
 
 @asynccontextmanager
@@ -110,8 +99,6 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_revenue, "interval", minutes=5, id="revenue")
     # Liquidity snapshots every 30 seconds
     scheduler.add_job(run_liquidity_snapshot, "interval", seconds=30, id="liquidity")
-    # Users incremental update every 6 hours
-    scheduler.add_job(run_users, "interval", hours=6, id="users")
     # Buybacks ledger every 5 minutes
     scheduler.add_job(run_buybacks, "interval", minutes=5, id="buybacks")
 
@@ -155,7 +142,6 @@ def health():
             "revenue": {dex: revenue_collectors[dex].last_updated for dex in REVENUE_DEXES},
             "comparison": comparison_collector.last_updated,
             "liquidity": liquidity_collector.last_updated,
-            "users": users_collector.last_updated,
             "buybacks": buybacks_collector.last_updated,
         },
     }
@@ -179,7 +165,6 @@ def get_snapshot(
             "revenue": {dex: revenue_collectors[dex].last_updated for dex in REVENUE_DEXES},
             "comparison": comparison_collector.last_updated,
             "liquidity": liquidity_collector.last_updated,
-            "users": users_collector.last_updated,
             "buybacks": buybacks_collector.last_updated,
         },
         "revenue": {
@@ -191,12 +176,6 @@ def get_snapshot(
             "summary": liquidity_collector.get_stats(hours=liquidity_hours),
             "tickers": liquidity_collector.get_available_tickers(),
         },
-        "users": {
-            "summary": users_collector.get_summary(),
-            "timeline": users_collector.get_timeline(period=timeline_days),
-            "top_venues": users_collector.get_top_venues(),
-            "type_breakdown": users_collector.get_type_breakdown(),
-        },
         "buybacks": buybacks_collector.get_data(),
         "endpoints": {
             "snapshot": "/api/snapshot",
@@ -206,10 +185,6 @@ def get_snapshot(
             "liquidity": "/api/liquidity?hours=1..168",
             "liquidity_timeseries": "/api/liquidity/timeseries?ticker=US500&hours=4",
             "liquidity_tickers": "/api/liquidity/tickers",
-            "users_summary": "/api/users/summary",
-            "users_timeline": "/api/users/timeline?period=90",
-            "users_top_venues": "/api/users/top_venues",
-            "users_type_breakdown": "/api/users/type_breakdown",
             "buybacks": "/api/buybacks",
         },
     }
@@ -264,84 +239,3 @@ def get_liquidity_timeseries(
 def get_liquidity_tickers():
     """All discovered tickers, grouped by DEX."""
     return liquidity_collector.get_available_tickers()
-
-
-@app.get("/api/users")
-def get_users():
-    """
-    HIP-3 user tracking summary (legacy endpoint, kept for backward compat).
-    Returns: total_hip3_users, by_dex, new_users, bootstrap_status.
-    """
-    return users_collector.get_data()
-
-
-@app.get("/api/users/summary")
-def get_users_summary():
-    """
-    HIP-3 user onboarding summary.
-    Returns: total_unique_users, by_dex, new_users (1d/7d/30d/90d), bootstrap_status.
-    """
-    return users_collector.get_summary()
-
-
-@app.get("/api/users/timeline")
-def get_users_timeline(period: int = Query(default=90, ge=1, le=365)):
-    """
-    Daily new HIP-3 user counts per DEX for the last N days.
-    Each entry: {date, km, xyz, flx, cash, hyna, vntl}
-    """
-    return users_collector.get_timeline(period=period)
-
-
-@app.get("/api/users/top_venues")
-def get_users_top_venues():
-    """
-    Unique users per venue, sorted descending.
-    Returns: [{dex, unique_users, pct}, ...]
-    """
-    return users_collector.get_top_venues()
-
-
-@app.get("/api/users/filter")
-async def users_filter(
-    period: int = Query(default=30, ge=1, le=365),
-    min_vol: float = Query(default=0.0, ge=0),
-    tradfi_ratio: float = Query(default=0.0, ge=0.0, le=1.0),
-    venues: str = Query(default=""),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200),
-):
-    """
-    Filter HIP-3 users by period, minimum volume, TradFi ratio, and venues.
-    Supports pagination via page / page_size query params.
-    Returns: {total_matching, type_a_count, type_b_count, by_dex, avg_volume, users, page, page_size, total_pages}
-    """
-    venue_list = [v.strip() for v in venues.split(",") if v.strip()] if venues else []
-    return users_collector.get_filter(period, min_vol, tradfi_ratio, venue_list, page=page, page_size=page_size)
-
-
-@app.get("/api/users/type_breakdown")
-async def users_type_breakdown():
-    """
-    All-time Type A / Type B user breakdown.
-    type_a = tradfi_vol_usd / hip3_volume_usd > 0.8
-    Returns: {type_a, type_b, type_a_pct, type_b_pct, avg_tradfi_ratio}
-    """
-    return users_collector.get_type_breakdown()
-
-
-@app.post("/api/admin/migrate_tradfi", include_in_schema=False)
-async def admin_migrate_tradfi():
-    """
-    Trigger the DEX-based TradFi migration manually.
-    Updates tradfi_vol_usd / crypto_vol_usd for users where it's missing.
-    """
-    import sqlite3 as _sqlite3
-    from schedulers.users import DB_PATH, _open_db, _migrate_dex_tradfi
-    try:
-        conn = _open_db()
-        updated = _migrate_dex_tradfi(conn)
-        conn.close()
-        return {"status": "ok", "updated": updated}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}

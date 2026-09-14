@@ -3,7 +3,6 @@ import RevenueDashboard from "./dashboards/Revenue";
 import ComparisonDashboard from "./dashboards/Comparison";
 import LiquidityDashboard from "./dashboards/Liquidity";
 import RevenueSimulator from "./dashboards/RevenueSimulator";
-import UsersDashboard from "./dashboards/Users";
 import BuybacksDashboard from "./dashboards/Buybacks";
 const DEX_LIST = [
   { id: "km", label: "Markets", color: "#00e5a0" },
@@ -53,18 +52,6 @@ const NAV = [
     ),
     items: [{ id: "buybacks", label: "sKNTQ Buybacks", color: "#ffb020" }],
   },
-  {
-    section: "Users",
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-    items: [{ id: "users", label: "HIP-3 Users", color: "#a78bfa" }],
-  },
 ];
 
 const C = {
@@ -91,7 +78,6 @@ export default function App() {
       case "comparison": return <ComparisonDashboard />;
       case "simulator":  return <RevenueSimulator />;
       case "liquidity":  return <LiquidityDashboard />;
-      case "users":      return <UsersDashboard />;
       case "buybacks":   return <BuybacksDashboard />;
       default: return <RevenueDashboard dexId="km" />;
     }
