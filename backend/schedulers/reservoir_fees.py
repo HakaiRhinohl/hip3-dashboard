@@ -213,6 +213,46 @@ def ingest(max_days: int | None = None) -> dict:
     return {"ingested": ok, "empty": empty, "failed": failed, "pending": remaining}
 
 
+def _dex_ratios(conn: sqlite3.Connection) -> dict:
+    """Per-DEX deployer share of the base fee, from the days that record both."""
+    ratios = {}
+    for dex, in conn.execute("SELECT DISTINCT dex FROM dex_daily"):
+        row = conn.execute(
+            "SELECT SUM(deployer_fee), SUM(fee - builder_fee) FROM dex_daily"
+            " WHERE dex=? AND deployer_fee IS NOT NULL AND fee IS NOT NULL"
+            " AND fee - builder_fee > 0", (dex,)).fetchone()
+        if row and row[0] and row[1]:
+            ratios[dex] = row[0] / row[1]
+    return ratios
+
+
+def daily_fees() -> dict:
+    """
+    Per-day fees, keyed by date, for charting actual history rather than a rate
+    applied to volume.
+
+    Days predating the `deployer_fee` column carry the reconstruction instead,
+    flagged so the chart can distinguish them. Both namespaces are folded into
+    one series, since km and mkts are the same venue either side of a rename.
+    """
+    conn = _db()
+    ratios = _dex_ratios(conn)
+    out: dict[str, dict] = {}
+    for date, dex, dep, fee, bld in conn.execute(
+        "SELECT date, dex, deployer_fee, fee, builder_fee FROM dex_daily ORDER BY date"
+    ):
+        estimated = dep is None
+        if estimated:
+            base = (fee or 0.0) - (bld or 0.0)
+            dep = base * ratios.get(dex, 0.0) if base > 0 else 0.0
+        day = out.setdefault(date, {"deployer": 0.0, "builder_on_dex": 0.0, "estimated": False})
+        day["deployer"] += dep or 0.0
+        day["builder_on_dex"] += bld or 0.0
+        day["estimated"] = day["estimated"] or estimated
+    conn.close()
+    return out
+
+
 def _reconstruct_deployer(conn: sqlite3.Connection) -> dict:
     """
     Estimate deployer fees for the days whose parquet predates the
@@ -292,7 +332,8 @@ def markets_fees(builders: list[str]) -> dict | None:
     conn = _db()
     row = conn.execute("""
         SELECT COUNT(*), SUM(deployer_fee), SUM(notional),
-               COUNT(deployer_fee), MIN(CASE WHEN deployer_fee IS NOT NULL THEN date END)
+               COUNT(deployer_fee), MIN(CASE WHEN deployer_fee IS NOT NULL THEN date END),
+               SUM(fee)
         FROM dex_daily
     """).fetchone()
     if not row or not row[0]:
@@ -300,6 +341,7 @@ def markets_fees(builders: list[str]) -> dict | None:
         return None
     days, deployer, notional = row[0], row[1] or 0.0, row[2] or 0.0
     deployer_days, deployer_from = row[3] or 0, row[4]
+    trader_fees = row[5] or 0.0
 
     ours = {b.lower() for b in builders if b}
     mine = other = 0.0
@@ -322,6 +364,9 @@ def markets_fees(builders: list[str]) -> dict | None:
     pending = len(_pending_days(conn))
     conn.close()
     return {
+        # What traders actually paid on km/mkts, summed per fill. Measured for
+        # every day, unlike the deployer side.
+        "trader_fees_usd": round(trader_fees, 2),
         "deployer_fee_usd": round(deployer, 2),
         # The deployer side covers fewer days than the builder side: the older
         # parquet schema has no deployer_fee column, so those days contribute

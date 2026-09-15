@@ -19,7 +19,7 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 from schedulers.lst import fetch_live_lst, merge_with_snapshot
 from schedulers.builder_fees import fetch_builder_revenue
-from schedulers.reservoir_fees import markets_fees
+from schedulers.reservoir_fees import daily_fees, markets_fees
 
 logger = logging.getLogger("kinetiq.revenue")
 
@@ -27,6 +27,13 @@ LAUNCH_MS = int(datetime(2025, 11, 1).timestamp() * 1000)
 KINETIQ_MIGRATION_DATE = "2026-06-20"
 KINETIQ_NORMAL_DEPLOYER_BPS = 4.0743
 KINETIQ_GROWTH_DEPLOYER_BPS = KINETIQ_NORMAL_DEPLOYER_BPS * 0.10
+
+# How deployer revenue is allocated. Recovered from the audited snapshot, whose
+# four allocation lines these three shares reproduce to within rounding.
+# Builder revenue goes to buybacks in full, on top of its deployer share.
+KMHYPE_DEPLOYER_SHARE = 0.10
+BUYBACK_DEPLOYER_SHARE = 0.10
+OPERATIONS_DEPLOYER_SHARE = 0.80
 
 # Audited on-chain snapshot. These are floors, not hard-coded totals: live
 # cumulative balances can move the dashboard above them, but never erase the
@@ -393,14 +400,29 @@ class RevenueCollector:
             if dex_status:
                 total_net_deposit += float(dex_status.get("totalNetDeposit", "0"))
 
-        # Build daily chart
+        # Build daily chart. Where the reservoir has the day, the deployer bar is
+        # the actual sum of that day's fills rather than the day's volume times
+        # an all-time average rate -- so spikes and quiet days show as they
+        # happened instead of tracking the volume curve exactly.
+        #
+        # The builder bar stays modelled. Its total is address-scoped (the DEX
+        # plus the apps) and only the on-DEX part can be dated, so spreading the
+        # whole figure by volume is the one presentation that neither invents
+        # daily attribution nor silently drops the off-DEX half.
+        per_day = daily_fees() if self.dex == "km" else {}
         cum = 0
         daily_chart = []
         for date in sorted_dates:
             v = daily_vol[date]
             cum += v
-            fg = v * eff_deployer_bps / 10000
-            fn = v * normal_deployer_bps / 10000
+            actual = per_day.get(date)
+            if actual:
+                fg = actual["deployer"]
+                # Normal mode is the same fees without the growth discount.
+                fn = fg / (self.cfg.get("growth_discount") or 1)
+            else:
+                fg = v * eff_deployer_bps / 10000
+                fn = v * normal_deployer_bps / 10000
             bf = v * eff_builder_bps / 10000
             daily_chart.append({
                 "date": date,
@@ -411,6 +433,8 @@ class RevenueCollector:
                 "builder_fee": round(bf, 2),
                 "total_fee_growth": round(fg + bf, 2),
                 "total_fee_normal": round(fn + bf, 2),
+                "deployer_source": ("estimated" if actual["estimated"] else "measured") if actual else "modelled",
+                "builder_fee_on_dex": round(actual["builder_on_dex"], 2) if actual else None,
                 "era": "legacy" if self.dex == "km" and date <= KINETIQ_MIGRATION_DATE else "current",
             })
 
@@ -523,6 +547,24 @@ class RevenueCollector:
                 "current": {"dex": "mkts", "quote": "USDC", "first_day": "2026-06-21"},
             }
             self.data["onchain_reconstruction"] = KINETIQ_ONCHAIN_SNAPSHOT
+            # The audited snapshot's allocation lines are a pure function of its
+            # deployer and builder totals: 10% of deployer to kmHYPE, 80% to
+            # operations, and the rest -- the remaining 10% plus all of builder
+            # -- to buybacks. That arithmetic reproduces all four of its figures
+            # to within rounding, so the same policy is applied to the current
+            # totals instead of leaving the allocation frozen against a deployer
+            # number the fills contradict.
+            self.data["revenue_allocation"] = {
+                "basis": "audited policy applied to current totals",
+                "deployer_revenue": round(deployer_fees, 2),
+                "builder_revenue": round(total_builder, 2),
+                "protocol_revenue": round(total_fees, 2),
+                "kmhype_allocation": round(deployer_fees * KMHYPE_DEPLOYER_SHARE, 2),
+                "operations_reinvestment": round(deployer_fees * OPERATIONS_DEPLOYER_SHARE, 2),
+                "minimum_kntq_buybacks": round(
+                    deployer_fees * BUYBACK_DEPLOYER_SHARE + total_builder, 2),
+                "trader_fees": round(reservoir["trader_fees_usd"], 2) if reservoir else None,
+            }
             if reservoir:
                 self.data["reservoir_fees"] = reservoir
             if builder_measured:

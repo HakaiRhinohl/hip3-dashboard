@@ -392,6 +392,9 @@ export default function RevenueDashboard({ dexId = "km" }) {
 
   const reconstruction = revData?.onchain_reconstruction || KINETIQ_ONCHAIN_FALLBACK;
   const resv = revData?.reservoir_fees?.complete ? revData.reservoir_fees : null;
+  const alloc = revData?.revenue_allocation?.trader_fees ? revData.revenue_allocation : null;
+  // Allocation figures: live where the fills support them, audited otherwise.
+  const alc = alloc || reconstruction;
   const khype = resolveKhype(revData?.lst);
   const khypePolicyPeriodRevenue = khype.buybacks / 0.70;
   const khypePolicyTreasury = khypePolicyPeriodRevenue * 0.30;
@@ -487,16 +490,20 @@ export default function RevenueDashboard({ dexId = "km" }) {
           </div>
 
           <div style={{ color: C.muted, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
-            Audited reconstruction as of {reconstruction.as_of}
-            {resv ? " · deployer line superseded by the per-fill measurement below" : ""}
+            {alloc ? `Measured from fills · ${resv?.covers?.from} to ${resv?.covers?.to}` : `Audited reconstruction as of ${reconstruction.as_of}`}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
-            {[
+            {(alloc ? [
+              ["Trader fees", alloc.trader_fees],
+              ["Deployer revenue", alloc.deployer_revenue],
+              ["Captured revenue", alloc.protocol_revenue],
+              ["Min. KNTQ buybacks", alloc.minimum_kntq_buybacks],
+            ] : [
               ["Trader fees", reconstruction.user_fees],
               ["HIP-3 fees", reconstruction.hip3_fees],
               ["Captured revenue", reconstruction.protocol_revenue],
               ["Min. KNTQ buybacks", reconstruction.minimum_kntq_buybacks],
-            ].map(([label, value]) => (
+            ]).map(([label, value]) => (
               <div key={label} style={{ flex: "1 1 160px", background: C.card, border: `1px solid ${C.border}`, borderRadius: 7, padding: "10px 12px" }}>
                 <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>{label}</div>
                 <div style={{ color: label === "Captured revenue" ? accent : C.text, fontSize: 15, fontWeight: 700, marginTop: 3 }}>{fmt(value)}</div>
@@ -504,7 +511,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
             ))}
             <div style={{ flexBasis: "100%", color: C.muted, fontSize: 9 }}>
               Volume = daily base volume × close. {resv
-                ? `Deployer revenue is summed per fill from ${resv.days_ingested} days of reservoir data (${resv.covers?.from} to ${resv.covers?.to}): ${fmt(resv.deployer_fee_usd)} measured over the ${resv.deployer_days} days carrying a deployer_fee column, plus ${fmt(resv.deployer_reconstructed?.estimated_usd)} reconstructed from the base fee for the ${resv.deployer_reconstructed?.days} earlier days that predate it (leave-one-out error: ${resv.deployer_reconstructed?.validation?.median_error_pct}% median, ${resv.deployer_reconstructed?.validation?.p90_error_pct}% p90). This replaces the audited ${fmt(reconstruction.deployer_revenue)}, which is ${(reconstruction.deployer_revenue / resv.deployer_total_est_usd).toFixed(2)}x higher; an independent count of what actually left the fee recipient gives $169,268, 0.7% from this figure.`
+                ? `Trader fees and deployer revenue are summed per fill from ${resv.days_ingested} days of reservoir data (${resv.covers?.from} to ${resv.covers?.to}). Deployer revenue is ${fmt(resv.deployer_fee_usd)} measured over the ${resv.deployer_days} days carrying a deployer_fee column, plus ${fmt(resv.deployer_reconstructed?.estimated_usd)} reconstructed from the base fee for the ${resv.deployer_reconstructed?.days} earlier days that predate it (leave-one-out error: ${resv.deployer_reconstructed?.validation?.median_error_pct}% median, ${resv.deployer_reconstructed?.validation?.p90_error_pct}% p90). This replaces the audited ${fmt(reconstruction.deployer_revenue)}, which is ${(reconstruction.deployer_revenue / resv.deployer_total_est_usd).toFixed(2)}x higher and close to the entire base fee — the deployer receives roughly half of that, Hyperliquid keeps the rest. An independent count of what actually left the fee recipient gives $169,268, 0.7% from this figure. Allocation applies the audited policy (10% kmHYPE, 10% buybacks, 80% operations) to these totals.`
                 : `Deployer revenue is the audited reconstruction as of ${reconstruction.as_of}; the live fee-recipient watermark is unusable for it.`} Builder revenue is measured, not estimated: {revData?.builder_revenue_measured
                 ? `${revData.builder_revenue_measured.claim_count} dated reward claims plus ${fmt(revData.builder_revenue_measured.unclaimed_usd)} still unclaimed, with the 30d run-rate taken over the ${revData.builder_revenue_measured.window_days}-day window since the claim on ${revData.builder_revenue_measured.window_start}`
                 : "read from the builder's cumulative rewards"}. DefiLlama is excluded when it conflicts with transaction-level flows.
@@ -529,7 +536,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: 0, fontWeight: 600 }}>Allocated Daily Revenue</h3>
-              <div style={{ fontSize: 10, color: C.muted }}>Volume-weighted estimate · line = cumulative</div>
+              <div style={{ fontSize: 10, color: C.muted }}>
+                {alloc ? "Deployer bar = that day's actual fills · builder bar volume-weighted · line = cumulative"
+                       : "Volume-weighted estimate · line = cumulative"}
+              </div>
             </div>
             {feeChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={340}>
@@ -624,13 +634,13 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase" }}>Markets allocation</div>
-                    <div style={{ color: C.text, fontSize: 23, fontWeight: 700 }}>{fmt(reconstruction.kmhype_allocation)}</div>
+                    <div style={{ color: C.text, fontSize: 23, fontWeight: 700 }}>{fmt(alc.kmhype_allocation)}</div>
                   </div>
                 </div>
                 <div style={{ marginTop: 18 }}>
-                  <AllocationBar label="kmHYPE share" value={reconstruction.kmhype_allocation} total={reconstruction.deployer_revenue} color={C.purple} note="10% of reconstructed deployer revenue" />
-                  <AllocationBar label="Minimum KNTQ buybacks" value={reconstruction.minimum_kntq_buybacks} total={reconstruction.protocol_revenue} color={accent} note="Builder revenue + a separate 10% deployer allocation" />
-                  <AllocationBar label="Operations / reinvestment" value={reconstruction.operations_reinvestment} total={reconstruction.protocol_revenue} color={C.cyan} note="Residual reconstructed allocation" />
+                  <AllocationBar label="kmHYPE share" value={alc.kmhype_allocation} total={alc.deployer_revenue} color={C.purple} note={`10% of ${alloc ? "measured" : "reconstructed"} deployer revenue`} />
+                  <AllocationBar label="Minimum KNTQ buybacks" value={alc.minimum_kntq_buybacks} total={alc.protocol_revenue} color={accent} note="Builder revenue + a separate 10% deployer allocation" />
+                  <AllocationBar label="Operations / reinvestment" value={alc.operations_reinvestment} total={alc.protocol_revenue} color={C.cyan} note="80% of deployer revenue" />
                 </div>
                 <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>
                   This is not the full Markets revenue. It is the portion attributable to kmHYPE from the deployer flow.
