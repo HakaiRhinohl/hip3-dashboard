@@ -35,9 +35,9 @@ KINETIQ_GROWTH_DEPLOYER_BPS = KINETIQ_NORMAL_DEPLOYER_BPS * 0.10
 #   fee recipient        $100,959   builder web        $32,840
 #   0x537e3d17 (funded    $19,998   mobile route        $5,874
 #   $160,528 by the fee recipient)
-# Against a policy entitlement of ~$409K, so roughly 39% has been delivered.
-# The remainder is traceable: ~$266K net was bridged to HyperEVM, where none of
-# these addresses holds KNTQ.
+# The rest of the gross base leaves via HyperEVM: the web builder's share was
+# bridged onward with Circle CCTP to Arbitrum and Base, to its own address on
+# each. Read as operating cost, not as buyback money withheld.
 MARKETS_BUYBACK_DELIVERED = 159_671.0
 
 KMHYPE_DEPLOYER_SHARE = 0.10
@@ -570,15 +570,18 @@ class RevenueCollector:
                 "protocol_revenue": round(total_fees, 2),
                 "kmhype_allocation": round(deployer_fees * KMHYPE_DEPLOYER_SHARE, 2),
                 "operations_reinvestment": round(deployer_fees * OPERATIONS_DEPLOYER_SHARE, 2),
-                # Kinetiq's published policy: 100% of disposable Markets income,
-                # a minimum of 10% of the deployer share plus builder-code
-                # revenue, buys KNTQ for sKNTQ holders. This is the entitlement
-                # that policy implies, not money observed arriving.
+                # Kinetiq's published policy directs 100% of *disposable*
+                # Markets income -- a minimum of 10% of the deployer share plus
+                # builder-code revenue -- into KNTQ for sKNTQ holders. This is
+                # that base gross, before the cost of running the venue, so it
+                # is a ceiling on buybacks rather than a promise of them.
                 "kntq_buybacks_entitlement": round(
                     deployer_fees * BUYBACK_DEPLOYER_SHARE + total_builder, 2),
                 # What Markets-sourced money has actually reached the buyback
-                # wallet, traced on-chain. It runs well under the entitlement
-                # because most builder revenue is bridged to HyperEVM instead.
+                # wallet, traced on-chain. The difference leaves via HyperEVM
+                # and Circle CCTP to Arbitrum and Base, which Jose reads as
+                # operating expenses and payroll -- i.e. the "disposable"
+                # qualifier doing its work, not a shortfall against policy.
                 "kntq_buybacks_delivered": MARKETS_BUYBACK_DELIVERED,
                 "trader_fees": round(reservoir["trader_fees_usd"], 2) if reservoir else None,
             }
