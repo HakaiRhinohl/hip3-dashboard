@@ -391,6 +391,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
   }));
 
   const reconstruction = revData?.onchain_reconstruction || KINETIQ_ONCHAIN_FALLBACK;
+  const resv = revData?.reservoir_fees?.complete ? revData.reservoir_fees : null;
   const khype = resolveKhype(revData?.lst);
   const khypePolicyPeriodRevenue = khype.buybacks / 0.70;
   const khypePolicyTreasury = khypePolicyPeriodRevenue * 0.30;
@@ -485,6 +486,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
             </div>
           </div>
 
+          <div style={{ color: C.muted, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
+            Audited reconstruction as of {reconstruction.as_of}
+            {resv ? " · deployer line superseded by the per-fill measurement below" : ""}
+          </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
             {[
               ["Trader fees", reconstruction.user_fees],
@@ -498,7 +503,9 @@ export default function RevenueDashboard({ dexId = "km" }) {
               </div>
             ))}
             <div style={{ flexBasis: "100%", color: C.muted, fontSize: 9 }}>
-              Volume = daily base volume × close. Deployer revenue is the audited reconstruction as of {reconstruction.as_of}; the live fee-recipient watermark is unusable for it. Builder revenue is measured, not estimated: {revData?.builder_revenue_measured
+              Volume = daily base volume × close. {resv
+                ? `Deployer revenue is summed per fill from ${resv.days_ingested} days of reservoir data (${resv.covers?.from} to ${resv.covers?.to}): ${fmt(resv.deployer_fee_usd)} measured over the ${resv.deployer_days} days carrying a deployer_fee column, plus ${fmt(resv.deployer_reconstructed?.estimated_usd)} reconstructed from the base fee for the ${resv.deployer_reconstructed?.days} earlier days that predate it (leave-one-out error: ${resv.deployer_reconstructed?.validation?.median_error_pct}% median, ${resv.deployer_reconstructed?.validation?.p90_error_pct}% p90). This replaces the audited ${fmt(reconstruction.deployer_revenue)}, which is ${(reconstruction.deployer_revenue / resv.deployer_total_est_usd).toFixed(2)}x higher; an independent count of what actually left the fee recipient gives $169,268, 0.7% from this figure.`
+                : `Deployer revenue is the audited reconstruction as of ${reconstruction.as_of}; the live fee-recipient watermark is unusable for it.`} Builder revenue is measured, not estimated: {revData?.builder_revenue_measured
                 ? `${revData.builder_revenue_measured.claim_count} dated reward claims plus ${fmt(revData.builder_revenue_measured.unclaimed_usd)} still unclaimed, with the 30d run-rate taken over the ${revData.builder_revenue_measured.window_days}-day window since the claim on ${revData.builder_revenue_measured.window_start}`
                 : "read from the builder's cumulative rewards"}. DefiLlama is excluded when it conflicts with transaction-level flows.
             </div>

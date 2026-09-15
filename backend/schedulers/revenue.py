@@ -337,15 +337,20 @@ class RevenueCollector:
         builder_measured = None
         reservoir = None
         if self.dex == "km":
-            # Deployer revenue: summed per fill from the reservoir when the
-            # backfill has completed, which is exact and scoped to Markets' own
-            # DEX. Until then it falls back to the audited reconstruction -- the
-            # live watermark is unusable, reading ~$9.1M against ~$339K audited
-            # because the fee recipient's account value moves with more than fee
-            # accrual.
+            # Deployer revenue is summed per fill from the reservoir, scoped to
+            # Markets' own DEX. The 68 days that predate the `deployer_fee`
+            # column are reconstructed from the base fee rather than dropped,
+            # so this is measured-plus-reconstructed, not a pure measurement.
+            #
+            # It replaces the audited $338,960 figure, which is 2.02x this and
+            # does not survive checking: an independent on-chain counter of what
+            # actually left the fee recipient (8 extraction txs plus the
+            # remaining balance) gives $169,268, landing 0.7% from this total by
+            # a method sharing none of its inputs. The audited number stays
+            # exposed as `onchain_reconstruction` for comparison.
             reservoir = markets_fees(self.cfg["builders"])
-            if reservoir and reservoir.get("complete") and not reservoir.get("deployer_partial"):
-                deployer_fees = reservoir["deployer_fee_usd"]
+            if reservoir and reservoir.get("complete"):
+                deployer_fees = reservoir["deployer_total_est_usd"]
             else:
                 deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]
             # Builder revenue stays address-scoped on purpose. Revenue here is
