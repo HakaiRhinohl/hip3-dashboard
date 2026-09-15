@@ -11,7 +11,12 @@ Markets".
 The reservoir can: its fills carry `dex`, `builder`, `builder_fee` and
 `deployer_fee` per fill, so both sides are a straight sum with an exact scope.
 
-Two things about the data that the aggregation depends on:
+Three things about the data that the aggregation depends on:
+  - The schema is not stable. Files written before 2026-03-21 have no
+    `deployer_fee` column anywhere in the bucket, the `global/fills/raw`
+    prefix included, so no other prefix and no other vendor can fill it in.
+    Those days are reconstructed from the base fee instead; see
+    `_reconstruct_deployer`.
   - `builder_fills/` is just the subset of `all/` that carries a builder. The
     builder_fee totals match, but deployer_fee does NOT -- roughly 2.4x lower on
     the subset -- so everything is read from `all/`.
@@ -40,6 +45,12 @@ S3_REGION = "ap-northeast-1"
 
 # The two namespaces Markets has traded under, with the range each one covers.
 # Outside these the reservoir has no partition and the day is marked empty.
+#
+# Nothing is missing between them. km ends 2026-06-17 and mkts begins
+# 2026-07-01, and Markets simply did not trade in between: the reservoir's
+# `global/fills/raw` prefix was ingesting other DEXes normally on those dates
+# and records no km or mkts fill under any name, and Hyperliquid's own candles
+# have no bar for Markets on any of those 13 days either.
 DEX_RANGES = {
     "km":   (date(2026, 1, 12), date(2026, 6, 17)),
     "mkts": (date(2026, 7, 1), None),  # None = up to yesterday
@@ -62,6 +73,10 @@ def _db() -> sqlite3.Connection:
             fills INTEGER, notional REAL, deployer_fee REAL, builder_fee REAL,
             PRIMARY KEY (date, dex)
         )""")
+    # `fee` is what the trader paid. It is present in every schema version, so
+    # it is the only bridge to the days that predate the deployer_fee column.
+    if "fee" not in {r[1] for r in conn.execute("PRAGMA table_info(dex_daily)")}:
+        conn.execute("ALTER TABLE dex_daily ADD COLUMN fee REAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS dex_builder_daily (
             date TEXT NOT NULL, dex TEXT NOT NULL, builder TEXT NOT NULL,
@@ -118,7 +133,8 @@ def _aggregate(conn: sqlite3.Connection, path: str, dex: str, day: str) -> bool:
             SELECT COUNT(*),
                    SUM(CAST(price AS DOUBLE) * CAST(size AS DOUBLE)),
                    {dep},
-                   SUM(CAST(builder_fee AS DOUBLE))
+                   SUM(CAST(builder_fee AS DOUBLE)),
+                   SUM(CAST(fee AS DOUBLE))
             FROM read_parquet('{path}')
         """).fetchone()
         per_builder = d.execute(f"""
@@ -134,8 +150,9 @@ def _aggregate(conn: sqlite3.Connection, path: str, dex: str, day: str) -> bool:
         return False
 
     conn.execute(
-        "INSERT OR REPLACE INTO dex_daily VALUES (?,?,?,?,?,?)",
-        (day, dex, totals[0] or 0, totals[1] or 0.0, totals[2], totals[3] or 0.0),
+        "INSERT OR REPLACE INTO dex_daily (date, dex, fills, notional, deployer_fee, builder_fee, fee)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (day, dex, totals[0] or 0, totals[1] or 0.0, totals[2], totals[3] or 0.0, totals[4] or 0.0),
     )
     conn.executemany(
         "INSERT OR REPLACE INTO dex_builder_daily VALUES (?,?,?,?,?,?)",
@@ -196,6 +213,76 @@ def ingest(max_days: int | None = None) -> dict:
     return {"ingested": ok, "empty": empty, "failed": failed, "pending": remaining}
 
 
+def _reconstruct_deployer(conn: sqlite3.Connection) -> dict:
+    """
+    Estimate deployer fees for the days whose parquet predates the
+    `deployer_fee` column.
+
+    The deployer takes a share of the base fee -- what the trader paid, less
+    what went to the builder -- and that share is stable enough to bridge the
+    gap: across the days where both are recorded it sits near 0.5, drifting
+    only a few points between the km and mkts eras. `fee` and `builder_fee`
+    exist in every schema version, so the missing days still carry the input.
+
+    This is an estimate and is kept separate from the measured total
+    everywhere. The band is the validated error rather than the spread of the
+    daily ratio: the worst single day's ratio applied to all 68 days at once
+    describes an outcome that cannot occur, because the estimate aggregates
+    them and the daily noise averages out. `validation` scores the method
+    leave-one-out against the days where the answer is known, and that error is
+    what the band carries onto the estimate.
+    """
+    out = {"estimated_usd": 0.0, "low_usd": 0.0, "high_usd": 0.0,
+           "days": 0, "per_dex": [], "validation": None}
+    errors = []
+    for dex, in conn.execute("SELECT DISTINCT dex FROM dex_daily ORDER BY dex"):
+        known = conn.execute(
+            "SELECT date, fee - builder_fee, deployer_fee FROM dex_daily"
+            " WHERE dex=? AND deployer_fee IS NOT NULL AND fee IS NOT NULL"
+            " AND fee - builder_fee > 0", (dex,)).fetchall()
+        missing = conn.execute(
+            "SELECT SUM(fee - builder_fee), COUNT(*) FROM dex_daily"
+            " WHERE dex=? AND deployer_fee IS NULL AND fee IS NOT NULL", (dex,)).fetchone()
+        if not known or not missing or not missing[1] or not missing[0]:
+            continue
+        ratios = [d / b for _, b, d in known]
+        ratio = sum(d for _, _, d in known) / sum(b for _, b, d in known)
+        base = missing[0]
+        out["estimated_usd"] += base * ratio
+        out["days"] += missing[1]
+        out["per_dex"].append({
+            "dex": dex, "days": missing[1], "base_fee_usd": round(base, 2),
+            "ratio": round(ratio, 4),
+            "ratio_range": [round(min(ratios), 4), round(max(ratios), 4)],
+            "estimated_usd": round(base * ratio, 2),
+        })
+        # Leave-one-out: predict each known day from the ratio of the others,
+        # so the score is not read off the days that set the ratio.
+        tot_b = sum(b for _, b, _ in known)
+        tot_d = sum(d for _, _, d in known)
+        for _, b, d in known:
+            if tot_b - b <= 0:
+                continue
+            pred = b * ((tot_d - d) / (tot_b - b))
+            errors.append(abs(pred - d) / d if d else 0.0)
+
+    if errors:
+        errors.sort()
+        p90 = errors[int(len(errors) * 0.9)]
+        out["low_usd"] = out["estimated_usd"] * (1 - p90)
+        out["high_usd"] = out["estimated_usd"] * (1 + p90)
+        out["validation"] = {
+            "method": "leave-one-out over the days whose deployer_fee is known",
+            "days_tested": len(errors),
+            "median_error_pct": round(errors[len(errors) // 2] * 100, 2),
+            "p90_error_pct": round(p90 * 100, 2),
+            "band_is": "estimate +/- the p90 leave-one-out error",
+        }
+    for k in ("estimated_usd", "low_usd", "high_usd"):
+        out[k] = round(out[k], 2)
+    return out
+
+
 def markets_fees(builders: list[str]) -> dict | None:
     """
     Markets' fees as summed from the reservoir. `builders` are the builder codes
@@ -228,6 +315,7 @@ def markets_fees(builders: list[str]) -> dict | None:
         per_builder.append({"builder": b, "builder_fee_usd": round(f, 2),
                             "notional_usd": round(n or 0.0, 2), "is_markets": b in ours})
 
+    recon = _reconstruct_deployer(conn)
     covered = conn.execute(
         "SELECT MIN(date), MAX(date) FROM ingested WHERE status='ok'"
     ).fetchone()
@@ -241,6 +329,8 @@ def markets_fees(builders: list[str]) -> dict | None:
         "deployer_days": deployer_days,
         "deployer_from": deployer_from,
         "deployer_partial": deployer_days < days,
+        "deployer_reconstructed": recon,
+        "deployer_total_est_usd": round(deployer + recon["estimated_usd"], 2),
         "builder_fee_markets_usd": round(mine, 2),
         "builder_fee_other_usd": round(other, 2),
         "total_usd": round(deployer + mine, 2),
