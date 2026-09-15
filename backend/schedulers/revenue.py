@@ -32,13 +32,23 @@ KINETIQ_GROWTH_DEPLOYER_BPS = KINETIQ_NORMAL_DEPLOYER_BPS * 0.10
 # four allocation lines these three shares reproduce to within rounding.
 # Builder revenue goes to buybacks in full, on top of its deployer share.
 # Markets-sourced money traced into the sKNTQ buyback wallet, 2026-09-15:
-#   fee recipient        $100,959   builder web        $32,840
-#   0x537e3d17 (funded    $19,998   mobile route        $5,874
-#   $160,528 by the fee recipient)
+#   fee recipient  $100,959   builder web            $32,840
+#   0x537e3d17      $19,998   mobile route            $5,874
+#   0x20d5bbc0         $923
+# The last two hops are one step back: 0x537e3d17 is funded $160,528 by the fee
+# recipient and 0x20d5bbc0 $27,000 by the mobile route.
+#
+# Every one of the buyback wallet's 16 funders was walked back a hop, and the
+# $841,730 it has received reconciles to the dollar: $160,594 Markets, $622,733
+# kHYPE and staking (including the Kinetiq validator 0xeeee86f7...), $39,598
+# the KNTQ spot deployer, and $18,805 across seven pass-through wallets whose
+# own funders fan out into unrelated accounts. Attribution stops there on
+# purpose -- past one hop the money is mixed and any split would be invented.
+#
 # The rest of the gross base leaves via HyperEVM: the web builder's share was
 # bridged onward with Circle CCTP to Arbitrum and Base, to its own address on
 # each. Read as operating cost, not as buyback money withheld.
-MARKETS_BUYBACK_DELIVERED = 159_671.0
+MARKETS_BUYBACK_DELIVERED = 160_594.0
 
 KMHYPE_DEPLOYER_SHARE = 0.10
 BUYBACK_DEPLOYER_SHARE = 0.10
