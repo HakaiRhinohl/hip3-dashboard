@@ -497,7 +497,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
               ["Trader fees", alloc.trader_fees],
               ["Deployer revenue", alloc.deployer_revenue],
               ["Captured revenue", alloc.protocol_revenue],
-              ["Min. KNTQ buybacks", alloc.minimum_kntq_buybacks],
+              ["KNTQ buybacks delivered", alloc.kntq_buybacks_delivered],
             ] : [
               ["Trader fees", reconstruction.user_fees],
               ["HIP-3 fees", reconstruction.hip3_fees],
@@ -639,7 +639,11 @@ export default function RevenueDashboard({ dexId = "km" }) {
                 </div>
                 <div style={{ marginTop: 18 }}>
                   <AllocationBar label="kmHYPE share" value={alc.kmhype_allocation} total={alc.deployer_revenue} color={C.purple} note={`10% of ${alloc ? "measured" : "reconstructed"} deployer revenue`} />
-                  <AllocationBar label="Minimum KNTQ buybacks" value={alc.minimum_kntq_buybacks} total={alc.protocol_revenue} color={accent} note="Builder revenue + a separate 10% deployer allocation" />
+                  {alloc && (
+                    <AllocationBar label="KNTQ buybacks delivered" value={alloc.kntq_buybacks_delivered} total={alloc.kntq_buybacks_entitlement} color={accent}
+                      note={`traced on-chain into the sKNTQ wallet, against a ${fmt(alloc.kntq_buybacks_entitlement)} policy entitlement`} />
+                  )}
+                  <AllocationBar label={alloc ? "KNTQ buybacks entitlement" : "Minimum KNTQ buybacks"} value={alloc ? alloc.kntq_buybacks_entitlement : alc.minimum_kntq_buybacks} total={alc.protocol_revenue} color={C.cyan} note="Policy: builder revenue + a 10% deployer allocation" />
                   <AllocationBar label="Operations / reinvestment" value={alc.operations_reinvestment} total={alc.protocol_revenue} color={C.cyan} note="80% of deployer revenue" />
                 </div>
                 <div style={{ background: C.bg, borderRadius: 6, padding: "9px 11px", color: C.muted, fontSize: 9, lineHeight: 1.55 }}>

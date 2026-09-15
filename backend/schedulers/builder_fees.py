@@ -43,6 +43,34 @@ def _cumulative_rewards(address: str) -> float | None:
     return total
 
 
+def _builder_share(address: str) -> float:
+    """
+    What fraction of this address's claimable rewards are builder rewards.
+
+    `builderRewards` is builder-only, while `claimedRewards` + `unclaimedRewards`
+    covers referral commissions too. Where the address refers users, the second
+    is the larger of the two and the difference is not builder revenue.
+    """
+    ref = hl_post({"type": "referral", "user": address}, f"referral {address[:8]}")
+    if not isinstance(ref, dict):
+        return 1.0
+    builder = claimable = 0.0
+    for entry in ref.get("tokenToState") or []:
+        if not (isinstance(entry, list) and len(entry) == 2):
+            continue
+        s = entry[1]
+        try:
+            builder += float(s.get("builderRewards", 0) or 0)
+            claimable += float(s.get("claimedRewards", 0) or 0) + float(s.get("unclaimedRewards", 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if claimable <= 0 or builder >= claimable:
+        return 1.0
+    share = builder / claimable
+    logger.info(f"{address[:10]}: {(1 - share) * 100:.1f}% of claims are referral, not builder")
+    return share
+
+
 def _claims(address: str) -> list[tuple[int, float]]:
     """
     Dated (timestamp_ms, amount) for every rewardsClaim, oldest first.
@@ -105,7 +133,14 @@ def fetch_builder_revenue(addresses: list[str], target_days: int = 30) -> dict |
             logger.warning(f"builder rewards unreadable for {addr[:10]}")
             return None
         cumulative += c
-        claims.extend(_claims(addr))
+        # A rewardsClaim is not necessarily a builder claim: the same ledger
+        # entry covers referral commissions, and Markets' mobile address earns
+        # both. Its claims exceed its builderRewards by ~$14.9K, so scaling each
+        # address's claims by its own builder share keeps referral income out of
+        # the builder run-rate. Addresses with no referral earnings scale by 1.
+        addr_claims = _claims(addr)
+        share = _builder_share(addr)
+        claims.extend([(t, a * share) for t, a in addr_claims] if share < 1.0 else addr_claims)
     claims.sort()
 
     if not claims:

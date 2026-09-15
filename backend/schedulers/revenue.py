@@ -31,6 +31,15 @@ KINETIQ_GROWTH_DEPLOYER_BPS = KINETIQ_NORMAL_DEPLOYER_BPS * 0.10
 # How deployer revenue is allocated. Recovered from the audited snapshot, whose
 # four allocation lines these three shares reproduce to within rounding.
 # Builder revenue goes to buybacks in full, on top of its deployer share.
+# Markets-sourced money traced into the sKNTQ buyback wallet, 2026-09-15:
+#   fee recipient        $100,959   builder web        $32,840
+#   0x537e3d17 (funded    $19,998   mobile route        $5,874
+#   $160,528 by the fee recipient)
+# Against a policy entitlement of ~$409K, so roughly 39% has been delivered.
+# The remainder is traceable: ~$266K net was bridged to HyperEVM, where none of
+# these addresses holds KNTQ.
+MARKETS_BUYBACK_DELIVERED = 159_671.0
+
 KMHYPE_DEPLOYER_SHARE = 0.10
 BUYBACK_DEPLOYER_SHARE = 0.10
 OPERATIONS_DEPLOYER_SHARE = 0.80
@@ -561,8 +570,16 @@ class RevenueCollector:
                 "protocol_revenue": round(total_fees, 2),
                 "kmhype_allocation": round(deployer_fees * KMHYPE_DEPLOYER_SHARE, 2),
                 "operations_reinvestment": round(deployer_fees * OPERATIONS_DEPLOYER_SHARE, 2),
-                "minimum_kntq_buybacks": round(
+                # Kinetiq's published policy: 100% of disposable Markets income,
+                # a minimum of 10% of the deployer share plus builder-code
+                # revenue, buys KNTQ for sKNTQ holders. This is the entitlement
+                # that policy implies, not money observed arriving.
+                "kntq_buybacks_entitlement": round(
                     deployer_fees * BUYBACK_DEPLOYER_SHARE + total_builder, 2),
+                # What Markets-sourced money has actually reached the buyback
+                # wallet, traced on-chain. It runs well under the entitlement
+                # because most builder revenue is bridged to HyperEVM instead.
+                "kntq_buybacks_delivered": MARKETS_BUYBACK_DELIVERED,
                 "trader_fees": round(reservoir["trader_fees_usd"], 2) if reservoir else None,
             }
             if reservoir:
