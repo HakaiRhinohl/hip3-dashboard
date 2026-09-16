@@ -201,8 +201,13 @@ class ComparisonCollector:
                 "observed_days": len(daily),
                 "cum_volume": revenue.get("total_volume", 0),
                 "deployer_fees": fees.get("deployer", 0),
-                "builder_fees": fees.get("builder", 0),
-                "total_fees": fees.get("total", 0),
+                # Builder fees paid on each venue's own markets, so every row
+                # measures the same thing. Markets' own page reports its builder
+                # codes across all of Hyperliquid instead, a wider scope.
+                "builder_fees": fees.get("builder_on_venue") if fees.get("builder_on_venue") is not None else fees.get("builder", 0),
+                "builder_fees_own_codes": fees.get("builder", 0),
+                "total_fees": fees.get("deployer", 0) + (fees.get("builder_on_venue") if fees.get("builder_on_venue") is not None else fees.get("builder", 0)),
+                "fee_source": fees.get("source"),
                 "fee_coverage": revenue.get("fee_coverage", {}),
                 "eff_deployer_bps": rates.get("eff_deployer_bps_growth", 0),
                 "eff_deployer_bps_normal": rates.get("eff_deployer_bps_normal", 0),

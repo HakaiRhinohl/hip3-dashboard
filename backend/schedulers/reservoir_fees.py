@@ -87,6 +87,16 @@ def _db() -> sqlite3.Connection:
             fills INTEGER, notional REAL, builder_fee REAL,
             PRIMARY KEY (date, dex, builder)
         )""")
+    # Per-day totals for every other HIP-3 venue. Markets keeps its own richer
+    # tables above (per-builder rows, the deployer_fee reconstruction); other
+    # venues only need the day's sums to replace a fee-recipient watermark that
+    # proved as unreliable for them as it did for Markets.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS venue_daily (
+            date TEXT NOT NULL, dex TEXT NOT NULL, trades INTEGER, volume REAL,
+            fee REAL, deployer_fee REAL, builder_fee REAL,
+            PRIMARY KEY (date, dex)
+        )""")
     # status: 'ok' when ingested, 'empty' when the partition has no file.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS ingested (
@@ -410,4 +420,107 @@ def markets_fees(builders: list[str]) -> dict | None:
         "fill_notional_usd": round(notional, 2),
         "builders": per_builder[:25],
         "complete": pending == 0,
+    }
+
+
+# ── Other HIP-3 venues ────────────────────────────────────────────────────────
+#
+# Every venue in the dashboard used to take its deployer revenue from the fee
+# recipient's account-value watermark and its builder revenue from whichever
+# builder addresses happened to be configured. Checked against the reservoir on
+# 2026-09-16, that was wrong nearly everywhere: xyz's deployer revenue read
+# $1.58M against $16.93M measured, and its builder revenue $0 against $14.85M;
+# Dreamcash's builder revenue read $1.90M against $416.9K. Only io was close.
+#
+# Downloading these partitions is not practical -- xyz alone is 46 GB -- but
+# they are columnar and only a handful of columns are needed, so DuckDB reads
+# them straight from S3 and fetches a small fraction of that.
+
+VENUES = ["xyz", "cash", "flx", "para", "io", "hyna", "vntl"]
+
+
+def _duck_s3():
+    import duckdb
+    d = duckdb.connect()
+    d.execute("INSTALL httpfs; LOAD httpfs;")
+    key = os.environ.get("AWS_ACCESS_KEY_ID")
+    secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    if not key or not secret:
+        raise RuntimeError("AWS credentials not set")
+    d.execute(
+        f"SET s3_region='{S3_REGION}'; SET s3_access_key_id='{key}'; "
+        f"SET s3_secret_access_key='{secret}'; SET s3_requester_pays=true; "
+        "SET enable_progress_bar=false;"
+    )
+    return d
+
+
+def ingest_venues() -> dict:
+    """Append any days not yet stored for each venue. Safe to call repeatedly."""
+    conn = _db()
+    newest = (datetime.now(timezone.utc) - timedelta(hours=PUBLISH_LAG_HOURS)).date().isoformat()
+    try:
+        d = _duck_s3()
+    except Exception as exc:
+        logger.warning(f"venue ingest unavailable: {exc}")
+        conn.close()
+        return {}
+    added = {}
+    for dex in VENUES:
+        last = conn.execute("SELECT MAX(date) FROM venue_daily WHERE dex=?", (dex,)).fetchone()[0]
+        if last and last >= newest:
+            continue
+        path = f"s3://{S3_BUCKET}/by_dex/{dex}/fills/perp/all/*/fills.parquet"
+        src = f"read_parquet('{path}', hive_partitioning=true, union_by_name=true)"
+        where = f"WHERE CAST(date AS VARCHAR) > '{last}' AND CAST(date AS VARCHAR) <= '{newest}'" if last \
+            else f"WHERE CAST(date AS VARCHAR) <= '{newest}'"
+        rows = None
+        # Some venues' files predate the deployer_fee column entirely, and then
+        # it cannot be selected at all; record NULL rather than zero.
+        for dep in ("SUM(TRY_CAST(deployer_fee AS DOUBLE))", "NULL"):
+            try:
+                rows = d.execute(
+                    f"SELECT CAST(date AS VARCHAR), COUNT(DISTINCT trade_id), "
+                    f"SUM(CASE WHEN crossed THEN price*size END), SUM(fee), {dep}, "
+                    f"SUM(COALESCE(builder_fee, 0)) FROM {src} {where} GROUP BY 1"
+                ).fetchall()
+                break
+            except Exception as exc:
+                err = str(exc)
+                if "auth" in err.lower() or "403" in err or "credential" in err.lower():
+                    logger.error(f"venue ingest stopped on {dex}: {err[:120]}")
+                    conn.close()
+                    return added
+        if rows is None:
+            logger.warning(f"venue ingest {dex}: {err[:120]}")
+            continue
+        conn.executemany(
+            "INSERT OR REPLACE INTO venue_daily VALUES (?,?,?,?,?,?,?)",
+            [(r[0], dex, r[1], float(r[2] or 0), float(r[3] or 0),
+              float(r[4]) if r[4] is not None else None, float(r[5] or 0)) for r in rows])
+        conn.commit()
+        if rows:
+            added[dex] = len(rows)
+    conn.close()
+    if added:
+        logger.info(f"venue ingest: {added}")
+    return added
+
+
+def venue_fees(dex: str) -> dict | None:
+    """Cumulative measured fees on one venue's own markets, or None if unseen."""
+    conn = _db()
+    row = conn.execute(
+        "SELECT COUNT(*), MIN(date), MAX(date), SUM(volume), SUM(deployer_fee), "
+        "SUM(builder_fee), COUNT(deployer_fee) FROM venue_daily WHERE dex=?", (dex,)
+    ).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    return {
+        "days": row[0], "from": row[1], "to": row[2],
+        "volume_usd": round(row[3] or 0, 2),
+        "deployer_fee_usd": round(row[4] or 0, 2),
+        "builder_fee_on_venue_usd": round(row[5] or 0, 2),
+        "deployer_days": row[6],
     }

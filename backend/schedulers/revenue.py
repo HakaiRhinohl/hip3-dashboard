@@ -19,7 +19,7 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 from schedulers.fee_db import update_deployer_cumulative, parse_builder_rewards
 from schedulers.lst import fetch_live_lst, merge_with_snapshot
 from schedulers.builder_fees import fetch_builder_revenue
-from schedulers.reservoir_fees import daily_fees, markets_fees
+from schedulers.reservoir_fees import daily_fees, markets_fees, venue_fees
 from schedulers.buyback_origin import last_funding
 
 logger = logging.getLogger("kinetiq.revenue")
@@ -389,6 +389,25 @@ class RevenueCollector:
                 total_builder = builder_measured["cumulative_usd"]
             else:
                 total_builder = KINETIQ_ONCHAIN_SNAPSHOT["builder_revenue"]
+            # The venue-scoped builder figure -- every builder's fees on Markets'
+            # own markets, Tread.fi included -- is what the other venues report,
+            # so it is kept separately for like-for-like comparison.
+            builder_on_venue = (
+                (reservoir or {}).get("builder_fee_markets_usd", 0)
+                + (reservoir or {}).get("builder_fee_other_usd", 0)
+            ) if reservoir else None
+        else:
+            # Every other venue: summed per fill from the reservoir. The watermark
+            # and configured-builder figures above are only a fallback for a venue
+            # the reservoir has not covered yet -- see reservoir_fees for how far
+            # off they were.
+            venue = venue_fees(self.dex)
+            builder_on_venue = None
+            if venue and venue.get("deployer_days"):
+                deployer_fees = venue["deployer_fee_usd"]
+                total_builder = venue["builder_fee_on_venue_usd"]
+                builder_on_venue = total_builder
+                reservoir = {"source": "reservoir venue_daily", **venue}
 
         total_fees = deployer_fees + total_builder
 
@@ -528,6 +547,11 @@ class RevenueCollector:
                 "deployer": round(deployer_fees, 2),
                 "builder": round(total_builder, 2),
                 "total": round(total_fees, 2),
+                # Builder fees paid on this venue's own markets, by any builder.
+                # Identical to `builder` everywhere except Markets, whose
+                # `builder` is its own codes across all of Hyperliquid.
+                "builder_on_venue": round(builder_on_venue, 2) if builder_on_venue is not None else None,
+                "source": "reservoir" if (self.dex == "km" or builder_on_venue is not None) else "watermark_fallback",
             },
             "fee_coverage": {
                 "deployer": "audited cumulative on-chain reconstruction" if self.dex == "km" else "current observable fee-recipient balance",

@@ -87,6 +87,11 @@ async def run_reservoir():
             logger.info(f"Reservoir ingest: {result}")
     except Exception as e:
         logger.error(f"Reservoir ingest failed: {e}")
+    # Other venues: incremental, read in place from S3 rather than downloaded.
+    try:
+        await asyncio.to_thread(reservoir_fees.ingest_venues)
+    except Exception as e:
+        logger.error(f"Venue ingest failed: {e}")
 
 
 async def run_initial_collection():
