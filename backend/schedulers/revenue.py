@@ -374,8 +374,16 @@ class RevenueCollector:
             # remaining balance) gives $169,268, landing 0.7% from this total by
             # a method sharing none of its inputs. The audited number stays
             # exposed as `onchain_reconstruction` for comparison.
+            #
+            # This used to require the ingest to be fully caught up, which read
+            # sensibly and behaved terribly: the reservoir publishes a day's
+            # partition more than a day late, so there was always one day
+            # outstanding and the dashboard silently fell back to the audited
+            # figure -- the one that is 2.02x too high -- more or less daily.
+            # The ingested history is permanent, so it is used whenever it
+            # exists; only an empty or unreadable database falls back now.
             reservoir = markets_fees(self.cfg["builders"])
-            if reservoir and reservoir.get("complete"):
+            if reservoir and reservoir.get("deployer_total_est_usd"):
                 deployer_fees = reservoir["deployer_total_est_usd"]
             else:
                 deployer_fees = KINETIQ_ONCHAIN_SNAPSHOT["deployer_revenue"]

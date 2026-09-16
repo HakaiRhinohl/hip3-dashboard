@@ -60,6 +60,10 @@ DEX_RANGES = {
 # single cycle bounded instead of blocking startup on a full download.
 DAYS_PER_CYCLE = int(os.environ.get("RESERVOIR_DAYS_PER_CYCLE", "12"))
 
+# Observed publication delay: a day's fills.parquet lands around 13:50 UTC the
+# following day. Days newer than this are not attempted at all.
+PUBLISH_LAG_HOURS = 40
+
 
 def _db() -> sqlite3.Connection:
     d = os.path.dirname(DB_PATH)
@@ -109,6 +113,13 @@ def _download(dex: str, day: str, dest: str) -> str:
         return "ok"
     err = (p.stderr or "").lower()
     if "not exist" in err or "nosuchkey" in err or "404" in err:
+        return "empty"
+    # A Requester Pays bucket answers 403 for a key that is not there, because
+    # the caller has no ListBucket permission to be told otherwise. Days only
+    # become eligible once the reservoir has had time to publish them, so a 403
+    # here means the partition genuinely does not exist rather than a
+    # credentials problem -- which would fail every day, not one.
+    if "403" in err or "forbidden" in err:
         return "empty"
     logger.warning(f"{dex}/{day}: download failed: {(p.stderr or '')[:160]}")
     return "error"
@@ -163,10 +174,14 @@ def _aggregate(conn: sqlite3.Connection, path: str, dex: str, day: str) -> bool:
 
 def _pending_days(conn: sqlite3.Connection) -> list[tuple[str, str]]:
     done = {(r[0], r[1]) for r in conn.execute("SELECT date, dex FROM ingested WHERE status IN ('ok','empty')")}
-    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+    # The reservoir publishes a day's partition well into the following day, so
+    # asking for one too early just produces a 403 and leaves the day pending
+    # forever -- which used to drag `complete` false every single day and drop
+    # the dashboard back onto the superseded audited figure.
+    newest = (datetime.now(timezone.utc) - timedelta(hours=PUBLISH_LAG_HOURS)).date()
     out = []
     for dex, (start, end) in DEX_RANGES.items():
-        last = min(end or yesterday, yesterday)
+        last = min(end or newest, newest)
         day = start
         while day <= last:
             s = day.isoformat()

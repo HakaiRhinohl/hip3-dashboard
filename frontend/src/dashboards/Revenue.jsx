@@ -391,7 +391,10 @@ export default function RevenueDashboard({ dexId = "km" }) {
   }));
 
   const reconstruction = revData?.onchain_reconstruction || KINETIQ_ONCHAIN_FALLBACK;
-  const resv = revData?.reservoir_fees?.complete ? revData.reservoir_fees : null;
+  // Not gated on `complete`: the reservoir publishes a day late, so that flag
+  // is false most of the time and would flip the page back to the audited
+  // figures the backend is no longer using.
+  const resv = revData?.reservoir_fees?.deployer_total_est_usd ? revData.reservoir_fees : null;
   const alloc = revData?.revenue_allocation?.trader_fees ? revData.revenue_allocation : null;
   // Allocation figures: live where the fills support them, audited otherwise.
   const alc = alloc || reconstruction;
