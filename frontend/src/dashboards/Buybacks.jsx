@@ -100,8 +100,107 @@ function FlowTable({ rows, totalLabel }) {
   );
 }
 
+const fmtTokens = (n) => {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  n = Number(n);
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toFixed(0);
+};
+const pct = (a, b) => (a != null && b ? `${((a / b) * 100).toFixed(1)}%` : "—");
+
+// Policy parameters as published by Kinetiq. Kept beside the table they feed so
+// the assumptions are visible next to the numbers they produce.
+const LST_FEE = 0.10;              // performance fee on staking rewards
+const LST_BUYBACK_SHARE = 0.70;    // share of that fee used for KNTQ buybacks
+const VALIDATOR_COMMISSION = 0.015; // assumed average commission (not observed)
+const VALIDATOR_SHARE = 0.50;      // commission shared by active-set validators
+const MARKETS_DEPLOYER_MIN = 0.10; // minimum share of deployer revenue to buybacks
+
+function SupplyAndYield({ supply, realized, revenue }) {
+  if (!supply) {
+    return <div style={{ color: C.muted, fontSize: 12, padding: 40, textAlign: "center" }}>KNTQ supply data unavailable this cycle</div>;
+  }
+  const rewards = revenue?.lst?.khype?.implied_annual_gross_rewards_usd;
+  const lst = rewards != null
+    ? rewards * LST_FEE * LST_BUYBACK_SHARE + rewards * VALIDATOR_COMMISSION * VALIDATOR_SHARE
+    : null;
+  const p30 = revenue?.projections?.last_30d;
+  const policyMarkets = (mode) => p30?.[mode]
+    ? p30[mode].deployer * MARKETS_DEPLOYER_MIN + p30[mode].builder
+    : null;
+  const mG = policyMarkets("growth_mode");
+  const mN = policyMarkets("normal_mode");
+  const mcap = supply.market_cap_usd;
+  const flt = supply.float_usd;
+  const rows = [
+    { name: "Realized (on-chain, trailing 30d)", markets: null, lst: null, total: realized?.annualized_usd, realized: true },
+    { name: "Policy, Growth Mode", markets: mG, lst, total: mG != null && lst != null ? mG + lst : null },
+    { name: "Policy, Normal Mode", markets: mN, lst, total: mN != null && lst != null ? mN + lst : null },
+  ];
+  const traced = supply.burned_traced || {};
+  const cell = { padding: "9px 10px", fontSize: 11, borderBottom: `1px solid ${C.border}`, textAlign: "right", whiteSpace: "nowrap" };
+
+  return (
+    <div>
+      <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 12px", fontWeight: 600 }}>KNTQ supply</h3>
+      <div className="buybacks-kpis" style={{ gap: 10, marginBottom: 12 }}>
+        <StatCard label="Market Cap" value={fmt(mcap)} sub={`$${Number(supply.price_usd).toFixed(4)} · ${fmtTokens(supply.circulating_supply)} circulating`} accent={C.cyan} />
+        <StatCard label="Staked in sKNTQ" value={fmtTokens(supply.staked_kntq)} sub={`${supply.staked_pct_of_circulating}% of circulating`} accent={C.purple} />
+        <StatCard label="Burned (Assistance Fund)" value={fmtTokens(supply.burned_kntq)} sub={`${supply.burned_pct_total_supply}% of total supply`} accent={C.red} />
+        <StatCard label="Float" value={fmt(flt)} sub={`${fmtTokens(supply.float_kntq)} KNTQ · circulating − staked − burned`} accent={C.green} />
+      </div>
+      <p style={{ color: C.muted, fontSize: 10, margin: "0 0 22px", lineHeight: 1.6 }}>
+        Of the {fmtTokens(supply.burned_kntq)} KNTQ held by the Assistance Fund, {fmtTokens(traced.total)} is traceable to Kinetiq:
+        {" "}{fmtTokens(traced.from_spot_fees)} from KNTQ spot trading fees and {fmtTokens(traced.from_skntq_kip5)} sent by the sKNTQ contract when KIP-5 took effect.
+        {" "}The origin of the remaining {fmtTokens(traced.unattributed)} could not be attributed. Price, circulating supply and market cap are from {supply.sources?.price_circulating_mcap};
+        staked and burned amounts are read on-chain. Under KIP-5 sKNTQ no longer receives buybacks, so the staked share is likely to fall and the float to grow.
+      </p>
+
+      <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 6px", fontWeight: 600 }}>Buyback yield</h3>
+      <p style={{ color: C.muted, fontSize: 10, margin: "0 0 12px" }}>
+        {fmt(realized?.trailing_30d_usd)} of KNTQ bought in the trailing 30 days · purchases since {realized?.first_purchase || "—"}
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+          <thead>
+            <tr style={{ color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <th style={{ ...cell, textAlign: "left" }}>Scenario</th>
+              <th style={cell}>Markets</th>
+              <th style={cell}>LST</th>
+              <th style={cell}>Total annual</th>
+              <th style={cell}>vs {fmt(mcap)} mcap</th>
+              <th style={cell}>vs {fmt(flt)} float</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.name} style={{ color: r.realized ? C.green : C.text }}>
+                <td style={{ ...cell, textAlign: "left", fontWeight: r.realized ? 600 : 400 }}>{r.name}</td>
+                <td style={cell}>{r.markets != null ? fmt(r.markets) : "—"}</td>
+                <td style={cell}>{r.lst != null ? fmt(r.lst) : "—"}</td>
+                <td style={{ ...cell, fontWeight: 600 }}>{fmt(r.total)}</td>
+                <td style={cell}>{pct(r.total, mcap)}</td>
+                <td style={cell}>{pct(r.total, flt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ color: C.muted, fontSize: 9, margin: "12px 0 0", lineHeight: 1.6 }}>
+        Policy rows apply Kinetiq's published allocation to trailing 30-day run rates: Markets contributes 10% of deployer revenue plus builder-code revenue;
+        the LST contributes 70% of its 10% staking fee plus 50% of validator commissions at an assumed 1.5% average commission.
+        The realized row annualizes KNTQ actually purchased on-chain over the trailing 30 days. The two diverge because Markets has routed far less to
+        buybacks than its policy implies — most builder-code revenue appears to be retained as disposable income. On-chain observations are subject to
+        interpretation and may not capture every flow.
+      </p>
+    </div>
+  );
+}
+
 export default function BuybacksDashboard() {
   const { data, loading, error, refetch } = useApiData("/api/buybacks");
+  const { data: revenue } = useApiData("/api/revenue?dex=km");
   const [tab, setTab] = useState("overview");
 
   const sourcePie = useMemo(() => {
@@ -127,6 +226,7 @@ export default function BuybacksDashboard() {
 
   const tabs = [
     { id: "overview", label: "Overview" },
+    { id: "supply", label: "Supply & Yield" },
     { id: "sources", label: "Sources" },
     { id: "destinations", label: "Destinations" },
     { id: "timeline", label: "Timeline" },
@@ -151,12 +251,19 @@ export default function BuybacksDashboard() {
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.amber, boxShadow: `0 0 12px ${C.amber}` }} />
-          <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>sKNTQ Buybacks</h1>
+          <h1 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 22, fontWeight: 700, margin: 0 }}>KNTQ Buybacks</h1>
         </div>
         <p style={{ color: C.muted, fontSize: 11, margin: "4px 0 0 18px" }}>
           Reconstructed from the buyback wallet's on-chain ledger · updated {data.generated_at}
         </p>
       </div>
+
+      {data.kntq_supply?.kip5 && (
+        <div style={{ background: `${C.red}12`, border: `1px solid ${C.red}55`, borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 11, lineHeight: 1.6 }}>
+          <span style={{ color: C.red, fontWeight: 700 }}>KIP-5 · effective {data.kntq_supply.kip5.effective}</span>
+          <span style={{ color: C.text }}> — purchased KNTQ now goes to the Hyperliquid Assistance Fund, permanently out of circulation, instead of being distributed to sKNTQ holders. The future role of sKNTQ has not been specified. History on this page before that date reflects the previous destination.</span>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="buybacks-kpis" style={{ gap: 10, marginBottom: 20 }}>
@@ -178,6 +285,10 @@ export default function BuybacksDashboard() {
       </div>
 
       <div className="buybacks-content" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, minHeight: 420 }}>
+
+        {tab === "supply" && (
+          <SupplyAndYield supply={data.kntq_supply} realized={data.realized_buybacks} revenue={revenue} />
+        )}
 
         {tab === "overview" && (
           <div>

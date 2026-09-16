@@ -7,7 +7,7 @@ import { useApiData } from "../hooks/useApiData";
 import { Loading, ErrorState } from "../components/States";
 
 const DEX_COLORS = { km: "#00e5a0", xyz: "#7c5cfc", flx: "#ff4d6a", cash: "#ffb020", para: "#38bdf8", io: "#f472b6" };
-const DEX_NAMES  = { km: "Markets", xyz: "Trade.xyz", flx: "Felix", cash: "Dreamcash", para: "Paragon", io: "io" };
+const DEX_NAMES  = { km: "Markets", mkts: "Markets", xyz: "Trade.xyz", flx: "Felix", cash: "Dreamcash", para: "Paragon", io: "io", vntl: "Ventuals" };
 const P = { bg: "#060911", card: "#0c1020", border: "#151d38", subtle: "#1a2545", text: "#e4eaf3", muted: "#4f5e82" };
 
 const fmt = (n) => {
@@ -62,6 +62,7 @@ const SERIES_ORDER = ["xyz", "cash", "para", "io", "flx", "km"];
 
 export default function ComparisonDashboard() {
   const { data: apiData, loading, error, refetch } = useApiData("/api/comparison");
+  const liveVenues = apiData?.live_venues || [];
   const [tab, setTab] = useState("overview");
 
   // All data since Trade.xyz launch
@@ -207,7 +208,7 @@ export default function ComparisonDashboard() {
             <div style={{ marginTop: 16, overflowX: "auto" }}>
               <table className="comparison-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead><tr style={{ borderBottom: `1px solid ${P.border}` }}>
-                  {["", "Tickers", "Cum Volume", "Deployer Fees", "Builder", "Net Deposit", "30d Avg/d"].map((h, i) => (
+                  {["", "Tickers", "Cum Volume", "Deployer Fees", "Builder (on venue)", "Net Deposit", "30d Avg/d"].map((h, i) => (
                     <th key={i} style={{ padding: "6px 8px", textAlign: i === 0 ? "left" : "right", color: P.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
                   ))}
                 </tr></thead>
@@ -224,6 +225,41 @@ export default function ComparisonDashboard() {
                 ))}</tbody>
               </table>
             </div>
+            <p style={{ color: P.muted, fontSize: 9, margin: "10px 0 0", lineHeight: 1.6 }}>
+              Deployer and builder fees are summed per fill from the Hydromancer reservoir for every venue. Builder fees here are those paid on each venue's own markets by any builder, so every row measures the same thing; Markets' own page instead reports Kinetiq's builder codes across all of Hyperliquid, a wider scope.
+            </p>
+
+            {liveVenues.length > 0 && (
+              <div style={{ marginTop: 26 }}>
+                <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 4px", fontWeight: 600 }}>Live HIP-3 venues</h3>
+                <p style={{ color: P.muted, fontSize: 10, margin: "0 0 12px" }}>
+                  Trailing 24h volume and current open interest for every HIP-3 DEX, ranked among venues trading today
+                </p>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="comparison-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 520 }}>
+                    <thead><tr style={{ borderBottom: `1px solid ${P.border}` }}>
+                      {["Venue", "24h Volume", "Rank", "Open Interest", "Rank", "Active markets"].map((h, i) => (
+                        <th key={i} style={{ padding: "6px 8px", textAlign: i === 0 ? "left" : "right", color: P.muted, fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>{liveVenues.map((v) => {
+                      const idle = !v.volume_24h_usd;
+                      const isMarkets = v.dex === "mkts" || v.dex === "km";
+                      return (
+                        <tr key={v.dex} style={{ borderBottom: `1px solid ${P.subtle}`, opacity: idle ? 0.45 : 1, color: isMarkets ? DEX_COLORS.km : undefined }}>
+                          <td style={{ padding: "6px 8px", fontWeight: 600 }}>{v.dex === "km" ? "Markets (legacy km)" : (DEX_NAMES[v.dex] || v.dex)}{idle ? " · inactive" : ""}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right" }}>{idle ? "—" : fmt(v.volume_24h_usd)}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right" }}>{v.volume_rank ? `#${v.volume_rank}` : "—"}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right" }}>{idle ? "—" : fmt(v.open_interest_usd)}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right" }}>{v.oi_rank ? `#${v.oi_rank}` : "—"}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right" }}>{v.active_markets || "—"}</td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -166,6 +166,14 @@ const PROVIDER_COLORS = {
 };
 const providerColor = (p) => PROVIDER_COLORS[p] || C.subtle;
 
+const fmtK = (n) => {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  n = Number(n);
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toFixed(0);
+};
+
 const fmtSupply = (n) => {
   if (n == null || isNaN(n)) return "—";
   if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
@@ -282,6 +290,8 @@ function WalletRow({ role, address }) {
 export default function RevenueDashboard({ dexId = "km" }) {
   const { data: revData, loading: revLoading, error: revError, refetch: revRefetch } =
     useApiData(`/api/revenue?dex=${dexId}`);
+  const { data: buybackData } = useApiData(dexId === "km" ? "/api/buybacks" : null);
+  const supply = buybackData?.kntq_supply;
 
   const [tab, setTab] = useState("revenue");
 
@@ -463,7 +473,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
       <div className="revenue-kpis" style={{ gap: 10, marginBottom: 20 }}>
         <StatCard label="Cumulative Volume" value={fmt(d.cum_volume)} sub={`${fmt(avg7d)}/day · 7d calendar avg`} accent={C.cyan} />
         <StatCard label={isKm ? "Protocol Revenue" : "Observed Fees"} value={fmt(fees.total)} sub={fees.builder > 0 ? `${fmt(fees.deployer)} deployer + ${fmt(fees.builder)} builder` : `${fmt(fees.deployer)} deployer`} accent={C.amber} />
-        <StatCard label={isKm ? "30D Take Rate" : "Observed Rate Proxy"} value={effBps30d > 0 ? `${effBps30d.toFixed(2)} bps` : "—"} sub={isKm ? `${runRateDeployerBps.toFixed(2)} deployer + ${runRateBuilderBps.toFixed(2)} builder proxy` : "Observable deployer balance + cumulative builder"} accent={accent} />
+        <StatCard label={isKm ? "30D Take Rate" : "Effective Fee Rate"} value={effBps30d > 0 ? `${effBps30d.toFixed(2)} bps` : "—"} sub={isKm ? `${runRateDeployerBps.toFixed(2)} deployer + ${runRateBuilderBps.toFixed(2)} builder proxy` : (revData?.fees?.source === "reservoir" ? "Measured per fill · deployer + builder on venue" : "Observable deployer balance + cumulative builder")} accent={accent} />
         <StatCard label={isKm ? "Ann. Revenue (30D)" : "Ann. Fees (30D Proxy)"} value={annTotal > 0 ? fmt(annTotal) : "—"} sub={annTotal > 0 ? `${fmt(annTotal / 12)}/mo · 30d volume run-rate` : ""} accent={accent} />
         {isKm ? (
           <StatCard label="Ann. Revenue (30D Normal)" value={annNormalTotal > 0 ? fmt(annNormalTotal) : "—"} sub={annNormalTotal > 0 ? `${fmt(annNormalTotal / 12)}/mo · ${normalBps.toFixed(2)} deployer bps` : ""} accent={C.purple} />
@@ -644,7 +654,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
                   <AllocationBar label="kmHYPE share" value={alc.kmhype_allocation} total={alc.deployer_revenue} color={C.purple} note={`10% of ${alloc ? "measured" : "reconstructed"} deployer revenue`} />
                   {alloc && (
                     <AllocationBar label="KNTQ buybacks delivered" value={alloc.kntq_buybacks_delivered} total={alloc.protocol_revenue} color={accent}
-                      note="traced on-chain into the sKNTQ buyback wallet" />
+                      note="traced on-chain into the KNTQ buyback wallet, same attribution as the Buybacks page" />
                   )}
                   <AllocationBar label={alloc ? "Buyback base, before operating costs" : "Minimum KNTQ buybacks"} value={alloc ? alloc.kntq_buybacks_entitlement : alc.minimum_kntq_buybacks} total={alc.protocol_revenue} color={C.cyan}
                     note="Policy applies to disposable income: builder revenue + a 10% deployer allocation, net of what running the venue costs" />
@@ -664,16 +674,30 @@ export default function RevenueDashboard({ dexId = "km" }) {
                     <div style={{ color: accent, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700 }}>Additional KNTQ sink</div>
                     <div style={{ color: C.amber, background: `${C.amber}14`, border: `1px solid ${C.amber}44`, borderRadius: 20, padding: "3px 8px", fontSize: 8, letterSpacing: "0.08em" }}>NOT INCLUDED IN MARKETS REVENUE</div>
                   </div>
-                  <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 18, fontWeight: 700, marginBottom: 7 }}>KNTQ spot fees → Assistance Fund burn</div>
+                  <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 18, fontWeight: 700, marginBottom: 7 }}>KNTQ → Assistance Fund burn</div>
                   <div style={{ color: C.muted, fontSize: 10, lineHeight: 1.65, maxWidth: 720 }}>
-                    KNTQ earned by the token's spot deployer is transferred recurrently to Hyperliquid's Assistance Fund as a KNTQ burn flow. This is separate from Markets protocol revenue and from the sKNTQ buyback wallet.
+                    KNTQ earned by the token's spot deployer is transferred recurrently to Hyperliquid's Assistance Fund, which nobody controls, so it leaves circulation permanently. Since KIP-5 ({supply?.kip5?.effective || "2026-09-15"}) KNTQ purchased through buybacks is sent there as well, instead of to sKNTQ holders.
                   </div>
+                  {supply && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginTop: 12 }}>
+                      <div>
+                        <div style={{ color: C.muted, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>Held by the fund</div>
+                        <div style={{ color: C.text, fontSize: 18, fontWeight: 700 }}>{fmtK(supply.burned_kntq)} KNTQ</div>
+                        <div style={{ color: C.muted, fontSize: 9 }}>{supply.burned_pct_total_supply}% of total supply</div>
+                      </div>
+                      <div>
+                        <div style={{ color: C.muted, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>Traceable to Kinetiq</div>
+                        <div style={{ color: C.text, fontSize: 18, fontWeight: 700 }}>{fmtK(supply.burned_traced?.total)} KNTQ</div>
+                        <div style={{ color: C.muted, fontSize: 9 }}>{fmtK(supply.burned_traced?.from_spot_fees)} spot fees · {fmtK(supply.burned_traced?.from_skntq_kip5)} via KIP-5</div>
+                      </div>
+                    </div>
+                  )}
                   <a href={KNTQ_BURN_FLOW.explorer} target="_blank" rel="noreferrer" style={{ display: "inline-block", color: accent, fontSize: 9, marginTop: 10, textDecoration: "none", borderBottom: `1px solid ${accent}66`, paddingBottom: 2 }}>
                     Verify full deployer history on Hypurrscan ↗
                   </a>
                 </div>
                 <div style={{ background: `${C.bg}cc`, border: `1px solid ${C.border}`, borderRadius: 7, padding: 13 }}>
-                  <div style={{ color: C.muted, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>{KNTQ_BURN_FLOW.observedTransfers}+ outbound KNTQ transfers verified</div>
+                  <div style={{ color: C.muted, fontSize: 8, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>{supply ? `Live balance · ${supply.fetched_at}` : "Burn flow"}</div>
                   <div className="burn-wallet-flow" style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center" }}>
                     <div>
                       <div style={{ color: C.muted, fontSize: 8, marginBottom: 4 }}>SPOT DEPLOYER</div>
@@ -821,7 +845,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
       </div>
 
       <div style={{ marginTop: 16, fontSize: 10, color: C.subtle, textAlign: "center" }}>
-        Hyperliquid L1 API · {revData?.fee_coverage?.is_fully_historical ? "Transaction-level reconstruction" : "Observable fee balance + cumulative builder rewards proxy"} · Auto-refresh every 5 min · {revData?.generated_at}
+        Hyperliquid L1 API · {revData?.fee_coverage?.is_fully_historical ? "Transaction-level reconstruction" : (revData?.fees?.source === "reservoir" ? "Fees summed per fill from the Hydromancer reservoir" : "Observable fee balance + cumulative builder rewards proxy")} · Auto-refresh every 5 min · {revData?.generated_at}
       </div>
     </div>
   );

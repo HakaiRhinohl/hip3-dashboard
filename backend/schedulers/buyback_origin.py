@@ -64,7 +64,24 @@ _last_result: dict | None = None
 
 
 def last_funding() -> dict | None:
-    return _last_result
+    """
+    Latest attribution, falling back to the buybacks collector's cache on disk.
+
+    The in-memory result resets on every restart, and the revenue collector runs
+    before the buybacks collector at startup, so without the fallback the
+    Markets-delivered figure shows as empty for the first cycle after each
+    deploy.
+    """
+    if _last_result is not None:
+        return _last_result
+    try:
+        import json
+        import os
+        path = os.path.join(os.environ.get("CACHE_DIR", "/data"), "buybacks.json")
+        with open(path) as f:
+            return (json.load(f).get("data") or {}).get("funding_composition")
+    except Exception:
+        return None
 
 
 def _ledger(address: str) -> list:
