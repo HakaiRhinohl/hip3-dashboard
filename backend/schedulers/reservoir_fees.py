@@ -112,14 +112,17 @@ def _download(dex: str, day: str, dest: str) -> str:
     if p.returncode == 0:
         return "ok"
     err = (p.stderr or "").lower()
+    # Dead or rotated keys must never look like an absent partition: marking a
+    # day "empty" is permanent, so bad credentials would quietly retire the
+    # whole history one day at a time while still reporting success.
+    if any(s in err for s in ("invalidaccesskeyid", "invalidclienttokenid",
+                              "expiredtoken", "signaturedoesnotmatch")):
+        return "auth"
+    # Only an explicit 404 proves a partition does not exist. A bare 403 is
+    # ambiguous on a Requester Pays bucket -- it is what you get for a key you
+    # cannot list as well as for one that is not published yet -- so the day is
+    # left pending and retried rather than written off.
     if "not exist" in err or "nosuchkey" in err or "404" in err:
-        return "empty"
-    # A Requester Pays bucket answers 403 for a key that is not there, because
-    # the caller has no ListBucket permission to be told otherwise. Days only
-    # become eligible once the reservoir has had time to publish them, so a 403
-    # here means the partition genuinely does not exist rather than a
-    # credentials problem -- which would fail every day, not one.
-    if "403" in err or "forbidden" in err:
         return "empty"
     logger.warning(f"{dex}/{day}: download failed: {(p.stderr or '')[:160]}")
     return "error"
@@ -205,6 +208,13 @@ def ingest(max_days: int | None = None) -> dict:
             dest = tmp.name
         try:
             status = _download(dex, day, dest)
+            if status == "auth":
+                logger.error(
+                    "reservoir credentials rejected -- ingestion stopped. Nothing "
+                    "is marked processed; refresh AWS_ACCESS_KEY_ID / "
+                    "AWS_SECRET_ACCESS_KEY and the backfill resumes where it left off."
+                )
+                break
             if status == "ok" and _aggregate(conn, dest, dex, day):
                 ok += 1
             elif status == "empty":
