@@ -11,6 +11,8 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from schedulers import hl_post
+
 CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 
 logger = logging.getLogger("kinetiq.comparison")
@@ -37,6 +39,43 @@ def _period_total(daily: dict[str, float], end_date, days: int, offset: int = 0)
 
 def _change(current: float, previous: float) -> float | None:
     return round((current - previous) / previous * 100, 2) if previous > 0 else None
+
+
+def live_venue_snapshot() -> list[dict]:
+    """
+    Current 24h volume and open interest for every HIP-3 perp DEX, straight from
+    metaAndAssetCtxs. Deliberately not limited to DEXES: rankings like "third of
+    four live venues" depend on who else is trading today, and several venues in
+    the tracked set have gone quiet.
+    """
+    dexs = hl_post({"type": "perpDexs"}, "perpDexs")
+    if not isinstance(dexs, list):
+        return []
+    rows = []
+    for d in dexs:
+        name = (d or {}).get("name")
+        if not name:
+            continue
+        res = hl_post({"type": "metaAndAssetCtxs", "dex": name}, f"ctxs {name}")
+        if not (isinstance(res, list) and len(res) == 2):
+            continue
+        meta, ctxs = res
+        vol = oi = 0.0
+        active = 0
+        for u, c in zip(meta.get("universe", []), ctxs):
+            v = float(c.get("dayNtlVlm") or 0)
+            vol += v
+            oi += float(c.get("openInterest") or 0) * float(c.get("markPx") or 0)
+            if v > 0 and not u.get("isDelisted"):
+                active += 1
+        rows.append({"dex": name, "volume_24h_usd": round(vol, 2),
+                     "open_interest_usd": round(oi, 2), "active_markets": active})
+    live = [r for r in rows if r["volume_24h_usd"] > 0]
+    for i, r in enumerate(sorted(live, key=lambda r: -r["volume_24h_usd"]), 1):
+        r["volume_rank"] = i
+    for i, r in enumerate(sorted(live, key=lambda r: -r["open_interest_usd"]), 1):
+        r["oi_rank"] = i
+    return sorted(rows, key=lambda r: -r["volume_24h_usd"])
 
 
 class ComparisonCollector:
@@ -178,6 +217,7 @@ class ComparisonCollector:
 
         self.data = {
             "generated_at": now_str,
+            "live_venues": live_venue_snapshot(),
             "canonical_source": "revenue_collectors",
             "methodology": (
                 "Volumes, fees, rates and ticker histories are the exact canonical "

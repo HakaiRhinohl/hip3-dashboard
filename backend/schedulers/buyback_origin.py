@@ -55,6 +55,17 @@ RECYCLED = {
 DOLLARS = ("USDC", "USDH", "USDE", "USDT0")
 UNRESOLVED = "Recycled / unattributable"
 
+# The revenue collector reports how much Markets has funded, and it must be the
+# same figure the buybacks page shows. It used to be a pinned constant from an
+# earlier one-hop pass ($160.6K), which drifted to more than double what this
+# module computes once the fee recipient's mix was resolved. Both now read the
+# last result of the one computation.
+_last_result: dict | None = None
+
+
+def last_funding() -> dict | None:
+    return _last_result
+
 
 def _ledger(address: str) -> list:
     """Paginated non-funding ledger; the endpoint caps a page at 2000 records."""
@@ -198,13 +209,15 @@ def buyback_funding() -> dict | None:
         ]
         markets = sum(v for k, v in inbound.items() if "Markets" in k)
         logger.info(f"buyback funding: ${total:,.0f} total, ${markets:,.0f} from Markets")
-        return {
+        global _last_result
+        _last_result = {
             "method": "pooled (average-cost) attribution on the live balance, one hop back",
             "total_usd": round(total, 2),
             "markets_usd": round(markets, 2),
             "markets_pct": round(markets / total * 100, 1),
             "sources": rows,
         }
+        return _last_result
     except Exception as exc:
         logger.warning(f"buyback funding attribution failed: {exc}")
-        return None
+        return _last_result

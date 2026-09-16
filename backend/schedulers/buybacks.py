@@ -36,10 +36,11 @@ import json
 import logging
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from schedulers import hl_post
 from schedulers.buyback_origin import buyback_funding
+from schedulers.kntq_supply import fetch_kntq_supply
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 
@@ -74,14 +75,13 @@ KNOWN_COUNTERPARTIES = {
         "confirmed": True,
     },
     "0x696238e0ca31c94e24ca4cbe7921754e172e4d0f": {
-        # Holds ~1.24M KNTQ (from both the buyback wallet and the fee recipient)
-        # and forwards it in bulk to 0x2000...007c, Hyperliquid's system bridge
-        # address for token index 124 (KNTQ) -- i.e. it bridges bought-back KNTQ
-        # from HyperCore spot to HyperEVM. Consistent with feeding the sKNTQ
-        # staking contract, but not documented publicly.
-        "label": "sKNTQ staking bridge (routes KNTQ to HyperEVM)",
-        "category": "skntq_staking_bridge",
-        "confirmed": False,
+        # The sKNTQ contract itself: symbol() returns "sKNTQ" and name() "Staked
+        # KNTQ" on HyperEVM. It received bought-back KNTQ and bridged it to
+        # HyperEVM for stakers until KIP-5 (2026-09-15), when purchases were
+        # redirected to the Assistance Fund and it sent ~851K KNTQ there.
+        "label": "sKNTQ contract (pre-KIP-5 buyback destination)",
+        "category": "skntq_contract",
+        "confirmed": True,
     },
 }
 
@@ -290,6 +290,20 @@ class BuybacksCollector:
                 "cum_kntq_forwarded_usd": round(cum_out, 2),
             })
 
+        # Realized buyback pace: KNTQ actually bought over the trailing 30 days,
+        # annualized. This is the observed counterpart to the policy-derived
+        # buyback figures on the revenue side, and the two are meant to be read
+        # together -- they diverge because Markets routes far less to buybacks
+        # than its published policy implies.
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+        bought_30d = sum(v for d_, v in daily_buy_usd.items() if d_ > cutoff)
+        first_buy = min((d_ for d_, v in daily_buy_usd.items() if v > 0), default=None)
+        realized = {
+            "trailing_30d_usd": round(bought_30d, 2),
+            "annualized_usd": round(bought_30d / 30 * 365, 2),
+            "first_purchase": first_buy,
+        }
+
         confirmed_inbound = sum(r["usd"] for r in sources if r["confirmed"])
         unidentified_inbound = total_inbound - confirmed_inbound
 
@@ -339,6 +353,8 @@ class BuybacksCollector:
                 "largest is a treasury hub where several streams mix."
             ),
             "funding_composition": buyback_funding(),
+            "realized_buybacks": realized,
+            "kntq_supply": fetch_kntq_supply(),
             "totals": {
                 "inbound_usd": round(total_inbound, 2),
                 "kntq_bought_usd": round(total_bought_usd, 2),
