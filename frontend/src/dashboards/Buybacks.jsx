@@ -120,6 +120,7 @@ export default function BuybacksDashboard() {
 
   const totals = data.totals || {};
   const sources = data.sources || [];
+  const funding = data.funding_composition;
   const destinations = data.destinations || [];
   const dailyChart = data.daily_chart || [];
   const recent = data.recent_transactions || [];
@@ -231,6 +232,28 @@ export default function BuybacksDashboard() {
 
         {tab === "sources" && (
           <div>
+            {funding?.sources?.length > 0 && (
+              <div style={{ marginBottom: 26 }}>
+                <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 6px", fontWeight: 600 }}>Which business funds the buybacks</h3>
+                <p style={{ color: C.muted, fontSize: 10, margin: "0 0 14px" }}>
+                  The wallet list below stops at whoever sent the transfer. This resolves each one back to the business line the money came from — most funders are forwarding wallets, and the largest is a treasury account where the deployer, builder, staking, kmHYPE and KNTQ-spot streams all mix. Dollars are fungible, so the mixed account is split by the composition of its balance at the moment of each payment. FIFO on the same data moves Markets by about a sixth, which is the honest width of the answer.
+                </p>
+                {funding.sources.map((s) => (
+                  <div key={s.source} style={{ marginBottom: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 5 }}>
+                      <span style={{ color: C.text }}>{s.source}</span>
+                      <span style={{ color: C.muted }}>{fmt(s.usd)} · <span style={{ color: s.source.includes("Markets") ? C.green : C.cyan }}>{s.pct}%</span></span>
+                    </div>
+                    <div style={{ height: 6, background: C.bg, borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, s.pct)}%`, height: "100%", borderRadius: 10, background: s.source.includes("Markets") ? C.green : C.cyan }} />
+                    </div>
+                  </div>
+                ))}
+                <div style={{ color: C.muted, fontSize: 10, marginTop: 12 }}>
+                  Markets (DEX plus front-end) funds {fmt(funding.markets_usd)} of {fmt(funding.total_usd)}, or {funding.markets_pct}%. The rest comes from the staking side of the same business.
+                </div>
+              </div>
+            )}
             <h3 style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, margin: "0 0 6px", fontWeight: 600 }}>Inbound funding sources</h3>
             <p style={{ color: C.muted, fontSize: 10, margin: "0 0 16px" }}>Every wallet that has ever sent funds into the buyback wallet, ranked by USD value</p>
             <FlowTable rows={sources} totalLabel="inbound transfers" />

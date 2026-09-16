@@ -39,6 +39,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from schedulers import hl_post
+from schedulers.buyback_origin import buyback_funding
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "/data")
 
@@ -332,8 +333,12 @@ class BuybacksCollector:
                 "recipients, builders, the KNTQ spot deployer) or documented at "
                 "kinetiq.xyz/docs/khype; unmatched counterparties are reported as "
                 "unidentified rather than guessed. kmHYPE's separate buyback wallet "
-                "is not tracked here yet."
+                "is not tracked here yet. `funding_composition` goes a step further "
+                "than (1): it resolves each funder back to the business line the "
+                "money came from, since most of them are forwarding wallets and the "
+                "largest is a treasury hub where several streams mix."
             ),
+            "funding_composition": buyback_funding(),
             "totals": {
                 "inbound_usd": round(total_inbound, 2),
                 "kntq_bought_usd": round(total_bought_usd, 2),
