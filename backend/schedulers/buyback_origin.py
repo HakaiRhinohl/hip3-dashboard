@@ -53,7 +53,7 @@ RECYCLED = {
     "0x111111a1a0667d36bd57c0a9f569b98057111111",
 }
 DOLLARS = ("USDC", "USDH", "USDE", "USDT0")
-UNRESOLVED = "Reciclado / no atribuible"
+UNRESOLVED = "Recycled / unattributable"
 
 
 def _ledger(address: str) -> list:
