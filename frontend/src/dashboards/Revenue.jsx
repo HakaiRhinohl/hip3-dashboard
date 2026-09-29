@@ -390,6 +390,28 @@ export default function RevenueDashboard({ dexId = "km" }) {
       { name: "Actual", deployer: annDeployer, builder: annBuilder },
     ];
 
+  const recentRevenue = [7, 30, 90].map((days) => {
+    const fromApi = revData?.recent_revenue?.[`${days}d`];
+    if (fromApi) return { label: `${days}D`, ...fromApi };
+
+    const latestDate = chartData.at(-1)?.date;
+    if (!latestDate) return { label: `${days}D`, days, volume: 0, revenue: 0, annualized: 0 };
+    const cutoff = new Date(`${latestDate}T00:00:00Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - days + 1);
+    const rows = chartData.filter((row) => new Date(`${row.date}T00:00:00Z`) >= cutoff);
+    const volume = rows.reduce((sum, row) => sum + (row.daily_volume_usd || 0), 0);
+    const deployerRevenue = rows.reduce((sum, row) => sum + (row.deployer_fee_growth || 0), 0);
+    const builderRevenue = annBuilder / 365 * days;
+    const revenue = deployerRevenue + builderRevenue;
+    return {
+      label: `${days}D`, days, volume, revenue,
+      annualized: revenue / days * 365,
+      take_rate_bps: volume ? revenue / volume * 10000 : 0,
+      deployer_revenue: deployerRevenue,
+      builder_revenue: builderRevenue,
+    };
+  });
+
   const pieData = [
     { name: "Deployer Fees", value: fees.deployer, color: C.amber },
     { name: "Builder Fees", value: fees.builder, color: C.purple },
@@ -433,6 +455,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
         .migration-grid { display: grid; grid-template-columns: 1fr auto 1fr; }
         .lst-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .lst-bottom-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; }
+        .recent-revenue-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
         @media (max-width: 1050px) {
           .revenue-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
           .lst-grid, .lst-bottom-grid, .burn-flow-grid { grid-template-columns: 1fr !important; }
@@ -450,6 +473,7 @@ export default function RevenueDashboard({ dexId = "km" }) {
           .wallet-row { grid-template-columns: 1fr !important; gap: 4px !important; }
           .burn-wallet-flow { grid-template-columns: 1fr !important; }
           .breakdown-grid { grid-template-columns: 1fr !important; }
+          .recent-revenue-grid { grid-template-columns: 1fr; }
           .lst-share-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
@@ -528,6 +552,34 @@ export default function RevenueDashboard({ dexId = "km" }) {
                 : `Deployer revenue is the audited reconstruction as of ${reconstruction.as_of}; the live fee-recipient watermark is unusable for it.`} Builder revenue is measured, not estimated: {revData?.builder_revenue_measured
                 ? `${revData.builder_revenue_measured.claim_count} dated reward claims plus ${fmt(revData.builder_revenue_measured.unclaimed_usd)} still unclaimed, with the 30d run-rate taken over the ${revData.builder_revenue_measured.window_days}-day window since the claim on ${revData.builder_revenue_measured.window_start}`
                 : "read from the builder's cumulative rewards"}. DefiLlama is excluded when it conflicts with transaction-level flows.
+            </div>
+          </div>
+
+          <div style={{ background: C.card, border: `1px solid ${C.borderLight}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 13, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontFamily: "'IBM Plex Sans'", fontSize: 14, fontWeight: 700 }}>Recent Markets Revenue</div>
+                <div style={{ color: C.muted, fontSize: 9, marginTop: 3 }}>Calendar-window deployer and builder revenue</div>
+              </div>
+              <div style={{ color: accent, fontSize: 10, border: `1px solid ${accent}44`, background: `${accent}0d`, borderRadius: 5, padding: "5px 8px" }}>
+                ON-CHAIN + CLAIM RUN-RATE
+              </div>
+            </div>
+            <div className="recent-revenue-grid" style={{ gap: 10 }}>
+              {recentRevenue.map((period) => (
+                <div key={period.label} style={{ background: C.subtle, borderRadius: 8, padding: "12px 14px" }}>
+                  <div style={{ color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em" }}>{period.label} revenue</div>
+                  <div style={{ color: accent, fontSize: 20, fontWeight: 700, marginTop: 4 }}>{fmt(period.revenue)}</div>
+                  <div style={{ color: C.text, fontSize: 11, marginTop: 7 }}>Annualized · <strong>{fmt(period.annualized)}</strong></div>
+                  <div style={{ color: C.muted, fontSize: 9, marginTop: 3 }}>{fmt(period.volume)} volume · {(period.take_rate_bps || 0).toFixed(2)} bps</div>
+                  {(period.deployer_revenue != null || period.builder_revenue != null) && (
+                    <div style={{ color: C.muted, fontSize: 9, marginTop: 3 }}>{fmt(period.deployer_revenue || 0)} deployer + {fmt(period.builder_revenue || 0)} builder</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ color: C.muted, fontSize: 9, marginTop: 10 }}>
+              Deployer revenue is summed from daily reservoir fills or the validated older-schema reconstruction. Builder claims expose an exact recent run-rate but not daily attribution, so that measured pace is applied to each calendar window.
             </div>
           </div>
         </>

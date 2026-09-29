@@ -304,16 +304,18 @@ class RevenueCollector:
         num_days = len(daily_vol)
         sorted_dates = sorted(daily_vol.keys())
 
-        def trailing_calendar_average(days: int) -> float:
+        def trailing_calendar_total(days: int) -> float:
             if not sorted_dates:
                 return 0
             end_date = datetime.strptime(sorted_dates[-1], "%Y-%m-%d").date()
             start_date = end_date - timedelta(days=days - 1)
-            total = sum(
+            return sum(
                 daily_vol.get((start_date + timedelta(days=offset)).isoformat(), 0)
                 for offset in range(days)
             )
-            return total / days
+
+        def trailing_calendar_average(days: int) -> float:
+            return trailing_calendar_total(days) / days
 
         avg_7d = trailing_calendar_average(7)
         avg_30d = trailing_calendar_average(30)
@@ -488,6 +490,39 @@ class RevenueCollector:
         else:
             run_rate_builder_bps = eff_builder_bps
         run_rate_total_bps = run_rate_deployer_bps + run_rate_builder_bps
+        recent_revenue = {}
+        latest_revenue_date = datetime.strptime(sorted_dates[-1], "%Y-%m-%d").date() if sorted_dates else None
+        for days in (7, 30, 90):
+            cutoff = latest_revenue_date - timedelta(days=days - 1) if latest_revenue_date else None
+            period_rows = [
+                row for row in daily_chart
+                if cutoff and datetime.strptime(row["date"], "%Y-%m-%d").date() >= cutoff
+            ]
+            period_volume = sum(row["daily_volume_usd"] for row in period_rows)
+            deployer_revenue = sum(row["deployer_fee_growth"] for row in period_rows)
+            if self.dex == "km" and builder_measured and builder_measured.get("measured"):
+                # Claims measure the current builder pace exactly over their
+                # claim-anchored window, but do not expose daily attribution.
+                builder_revenue = builder_measured["annualized_usd"] / 365 * days
+                builder_source = "measured claim-window run-rate"
+            else:
+                builder_revenue = sum(row["builder_fee"] for row in period_rows)
+                builder_source = "volume-allocated cumulative builder rewards"
+            period_revenue = deployer_revenue + builder_revenue
+            recent_revenue[f"{days}d"] = {
+                "days": days,
+                "volume": round(period_volume),
+                "deployer_revenue": round(deployer_revenue, 2),
+                "builder_revenue": round(builder_revenue, 2),
+                "builder_source": builder_source,
+                "revenue": round(period_revenue, 2),
+                "annualized": round(period_revenue / days * 365, 2),
+                "take_rate_bps": round(period_revenue / period_volume * 10000, 4) if period_volume else 0,
+                "measured_days": sum(row.get("deployer_source") == "measured" for row in period_rows),
+                "reconstructed_days": sum(row.get("deployer_source") == "estimated" for row in period_rows),
+                "modelled_days": sum(row.get("deployer_source") == "modelled" for row in period_rows),
+                "latest_data_date": sorted_dates[-1] if sorted_dates else None,
+            }
         projections = {}
         for label, avg_d in [("last_7d", avg_7d), ("last_30d", avg_30d)]:
             if avg_d > 0 and run_rate_deployer_bps > 0:
@@ -578,6 +613,7 @@ class RevenueCollector:
             },
             "averages": {"daily": round(avg_daily), "avg_7d": round(avg_7d), "avg_30d": round(avg_30d)},
             "projections": projections,
+            "recent_revenue": recent_revenue,
             "daily_chart": daily_chart,
             "ticker_chart": ticker_chart,
         }
